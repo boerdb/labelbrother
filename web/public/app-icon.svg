@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="BrotherDruk">
+  <defs>
+    <linearGradient id="bg" x1="64" y1="48" x2="448" y2="464" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2274d2"/>
+      <stop offset="100%" stop-color="#12407a"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <g fill="#ffffff">
+    <rect x="152" y="118" width="208" height="58" rx="12"/>
+    <rect x="112" y="168" width="288" height="148" rx="32"/>
+    <rect x="164" y="292" width="184" height="132" rx="16"/>
+    <rect x="192" y="326" width="128" height="16" rx="6" fill="#1a5fb4" opacity="0.35"/>
+    <rect x="192" y="354" width="88" height="12" rx="5" fill="#1a5fb4" opacity="0.22"/>
+  </g>
+  <rect x="140" y="204" width="232" height="68" rx="14" fill="#0d3d7a" opacity="0.22"/>
+  <circle cx="348" cy="232" r="14" fill="#1a5fb4"/>
+  <circle cx="384" cy="232" r="14" fill="#9ec5f5"/>
+</svg>
