@@ -4,7 +4,18 @@ Installbare **Next.js PWA** om labels te ontwerpen (tekst, vormen, figuurtjes) e
 
 Standaard printer: `192.168.1.215` (TCP poort **9100**). Standaard label: **85×62 mm** ontwerp op **DK-22205** (62 mm doorlopend, RollW62) — zelfde instelling als [`C:\DEV\etiketten`](C:\DEV\etiketten): vóór print **90° gedraaid** naar 62×85 mm op de rol (954×696 px ontwerp → 696×954 px print).
 
-## Snel starten (zonder Docker — jouw situatie)
+## Productie (NEXT-server + PM2)
+
+Zie **[docs/DEPLOY.md](docs/DEPLOY.md)** — poort **3022**, pad `/var/www/labelbrother`, geen Docker.
+
+```bash
+python scripts/deploy_git_init.py   # eerste keer
+python scripts/deploy_pull.py       # updates
+```
+
+App op LAN: **http://192.168.1.32:3022**
+
+## Snel starten (lokaal op je PC — dev)
 
 ```powershell
 cd C:\DEV\brotherdruk
