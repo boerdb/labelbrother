@@ -7,14 +7,26 @@ import type { LabelCanvasHandle } from "@/components/LabelCanvas";
 
 const LabelCanvas = dynamic(() => import("@/components/LabelCanvas"), { ssr: false });
 import type { EditorElement, TextElement } from "@/lib/editorTypes";
-import { ICON_CATEGORY_LABELS, ICON_LIBRARY, type IconCategory } from "@/lib/icons";
+import { ICON_PACKS, getIconPack } from "@/lib/iconPacks";
+import {
+  ICON_CATEGORY_LABELS,
+  ICON_LIBRARY,
+  getAllIcons,
+  getExtraIcons,
+  registerExtraIcons,
+  unregisterPackIcons,
+  type IconCategory,
+} from "@/lib/icons";
 import { LABEL_SIZES, type LabelSizeId } from "@/lib/labelSizes";
 import { reidElements } from "@/lib/reidElements";
 import { scaleElements } from "@/lib/scaleElements";
 import { BUILTIN_TEMPLATES } from "@/lib/templates";
 import {
+  deleteIconPack,
   deleteTemplate,
+  listSavedIconPacks,
   listSavedTemplates,
+  saveIconPack,
   saveTemplate,
   type SavedTemplate,
 } from "@/lib/storage";
@@ -68,6 +80,10 @@ export default function EditorApp() {
   const [templateScale, setTemplateScale] = useState(100);
   const [iconQuery, setIconQuery] = useState("");
   const [iconFilter, setIconFilter] = useState<IconFilter>("medisch");
+  const [iconPackId, setIconPackId] = useState("builtin");
+  const [downloadedPacks, setDownloadedPacks] = useState<string[]>([]);
+  const [iconPackTick, setIconPackTick] = useState(0);
+  const [iconBusy, setIconBusy] = useState(false);
 
   const selected = useMemo(
     () => elements.find((e) => e.id === selectedId) ?? null,
@@ -76,16 +92,22 @@ export default function EditorApp() {
 
   const filteredIcons = useMemo(() => {
     const q = iconQuery.trim().toLowerCase();
-    return ICON_LIBRARY.filter((icon) => {
+    const source = iconPackId === "builtin" ? ICON_LIBRARY : getExtraIcons(iconPackId);
+    return source.filter((icon) => {
       if (iconFilter !== "all" && icon.category !== iconFilter) return false;
       if (!q) return true;
       return icon.label.toLowerCase().includes(q) || icon.id.includes(q);
     });
-  }, [iconQuery, iconFilter]);
+  }, [iconQuery, iconFilter, iconPackId, iconPackTick]);
 
   useEffect(() => {
     setSettings(loadSettings());
     void listSavedTemplates().then(setSavedTemplates);
+    void listSavedIconPacks().then((packs) => {
+      for (const pack of packs) registerExtraIcons(pack.icons);
+      setDownloadedPacks(packs.map((pack) => pack.id));
+      setIconPackTick((n) => n + 1);
+    });
   }, []);
 
   const requestTextEdit = (id: string) => {
@@ -180,6 +202,53 @@ export default function EditorApp() {
         strokeWidth: 3,
       },
     ]);
+  };
+
+  const downloadIconPack = async (packId: string) => {
+    setIconBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/icons", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ packId }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        icons?: import("@/lib/icons").IconDef[];
+      };
+      if (!res.ok || !data.ok || !data.icons?.length) {
+        throw new Error(data.error ?? "Download mislukt");
+      }
+      registerExtraIcons(data.icons);
+      await saveIconPack({ id: packId, icons: data.icons, updatedAt: Date.now() });
+      setDownloadedPacks((prev) => [...new Set([...prev, packId])]);
+      setIconPackTick((n) => n + 1);
+      setStatus(`${data.icons.length} figuurtjes geladen`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Download mislukt");
+    } finally {
+      setIconBusy(false);
+    }
+  };
+
+  const removeIconPack = async (packId: string) => {
+    unregisterPackIcons(packId);
+    await deleteIconPack(packId);
+    setDownloadedPacks((prev) => prev.filter((id) => id !== packId));
+    setIconPackTick((n) => n + 1);
+    if (iconPackId === packId) setIconPackId("builtin");
+    setStatus("Set verwijderd van dit apparaat");
+  };
+
+  const selectIconPack = (packId: string) => {
+    setIconPackId(packId);
+    setIconFilter(packId === "builtin" ? "medisch" : "all");
+    const pack = getIconPack(packId);
+    if (pack && !pack.builtin && !downloadedPacks.includes(packId)) {
+      void downloadIconPack(packId);
+    }
   };
 
   const addIcon = (iconId: string) => {
@@ -535,6 +604,55 @@ export default function EditorApp() {
             <div className="panel-section">
               <h2>Figuurtjes</h2>
               <div className="field">
+                <label htmlFor="icon-pack">Set</label>
+                <select
+                  id="icon-pack"
+                  value={iconPackId}
+                  onChange={(e) => selectIconPack(e.target.value)}
+                >
+                  {ICON_PACKS.map((pack) => {
+                    const ready = pack.builtin || downloadedPacks.includes(pack.id);
+                    return (
+                      <option key={pack.id} value={pack.id}>
+                        {pack.name}
+                        {ready ? "" : " — download"}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+              <p className="hint" style={{ marginTop: "-0.35rem" }}>
+                {getIconPack(iconPackId)?.description}
+                {getIconPack(iconPackId)?.builtin
+                  ? ""
+                  : ` · ${getIconPack(iconPackId)?.license}`}
+              </p>
+              {!getIconPack(iconPackId)?.builtin && (
+                <div className="btn-row" style={{ marginBottom: "0.75rem" }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={iconBusy}
+                    onClick={() => void downloadIconPack(iconPackId)}
+                  >
+                    {iconBusy
+                      ? "Downloaden…"
+                      : downloadedPacks.includes(iconPackId)
+                        ? "Opnieuw downloaden"
+                        : "Set downloaden"}
+                  </button>
+                  {downloadedPacks.includes(iconPackId) && (
+                    <button
+                      type="button"
+                      className="btn btn-danger"
+                      onClick={() => void removeIconPack(iconPackId)}
+                    >
+                      Verwijder set
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="field">
                 <label htmlFor="icon-search">Zoeken</label>
                 <input
                   id="icon-search"
@@ -609,7 +727,7 @@ export default function EditorApp() {
           onDrop={(e) => {
             e.preventDefault();
             const iconId = e.dataTransfer.getData("text/plain");
-            if (ICON_LIBRARY.some((icon) => icon.id === iconId)) {
+            if (getAllIcons().some((icon) => icon.id === iconId)) {
               addIcon(iconId);
             }
           }}

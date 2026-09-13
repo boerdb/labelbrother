@@ -1,4 +1,4 @@
-export type IconCategory = "medisch" | "waarschuwing" | "huis" | "pijlen";
+export type IconCategory = "medisch" | "waarschuwing" | "huis" | "pijlen" | "it";
 
 export interface IconDef {
   id: string;
@@ -13,6 +13,7 @@ export const ICON_CATEGORY_LABELS: Record<IconCategory | "all", string> = {
   waarschuwing: "Waarschuwing",
   huis: "Huis & werk",
   pijlen: "Pijlen & tekens",
+  it: "IT",
 };
 
 export const ICON_LIBRARY: IconDef[] = [
@@ -77,6 +78,30 @@ export const ICON_LIBRARY: IconDef[] = [
   { id: "star", label: "Ster", category: "pijlen", src: "/icons/star.svg" },
 ];
 
+const extraIcons = new Map<string, IconDef>();
+
+export function registerExtraIcons(icons: IconDef[]): void {
+  for (const icon of icons) extraIcons.set(icon.id, icon);
+}
+
+export function unregisterPackIcons(packId: string): void {
+  const prefix = `${packId}:`;
+  for (const id of extraIcons.keys()) {
+    if (id.startsWith(prefix)) extraIcons.delete(id);
+  }
+}
+
+export function getExtraIcons(packId?: string): IconDef[] {
+  const all = [...extraIcons.values()];
+  if (!packId) return all;
+  const prefix = `${packId}:`;
+  return all.filter((icon) => icon.id.startsWith(prefix));
+}
+
+export function getAllIcons(): IconDef[] {
+  return [...ICON_LIBRARY, ...extraIcons.values()];
+}
+
 export function getIconSrc(iconId: string): string | undefined {
-  return ICON_LIBRARY.find((i) => i.id === iconId)?.src;
+  return ICON_LIBRARY.find((i) => i.id === iconId)?.src ?? extraIcons.get(iconId)?.src;
 }
