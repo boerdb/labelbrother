@@ -7,7 +7,7 @@ import type { LabelCanvasHandle } from "@/components/LabelCanvas";
 
 const LabelCanvas = dynamic(() => import("@/components/LabelCanvas"), { ssr: false });
 import type { EditorElement, TextElement } from "@/lib/editorTypes";
-import { ICON_LIBRARY } from "@/lib/icons";
+import { ICON_CATEGORY_LABELS, ICON_LIBRARY, type IconCategory } from "@/lib/icons";
 import { LABEL_SIZES, type LabelSizeId } from "@/lib/labelSizes";
 import { reidElements } from "@/lib/reidElements";
 import { scaleElements } from "@/lib/scaleElements";
@@ -20,10 +20,14 @@ import {
 } from "@/lib/storage";
 
 const SETTINGS_KEY = "brotherdruk-settings";
+const ICON_SIZE = 96;
 
 interface AppSettings {
   apiKey: string;
 }
+
+type LibraryTab = "templates" | "icons" | "shapes";
+type IconFilter = "all" | IconCategory;
 
 function loadSettings(): AppSettings {
   if (typeof window === "undefined") return { apiKey: "" };
@@ -39,6 +43,12 @@ function cloneElements(elements: EditorElement[]): EditorElement[] {
   return structuredClone(elements);
 }
 
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
+}
+
 export default function EditorApp() {
   const canvasRef = useRef<LabelCanvasHandle>(null);
   const textContentRef = useRef<HTMLTextAreaElement>(null);
@@ -51,32 +61,35 @@ export default function EditorApp() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
-  const [panel, setPanel] = useState<"props" | "templates" | "icons" | "settings">("templates");
+  const [library, setLibrary] = useState<LibraryTab>("templates");
   const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
   const [settings, setSettings] = useState<AppSettings>({ apiKey: "" });
   const [saveName, setSaveName] = useState("Mijn sjabloon");
-  /** Schaal voor nieuw ingeladen sjablonen (100 = ontwerpgrootte). */
-  const [templateScale, setTemplateScale] = useState(130);
+  const [templateScale, setTemplateScale] = useState(100);
+  const [iconQuery, setIconQuery] = useState("");
+  const [iconFilter, setIconFilter] = useState<IconFilter>("medisch");
 
   const selected = useMemo(
     () => elements.find((e) => e.id === selectedId) ?? null,
     [elements, selectedId],
   );
 
+  const filteredIcons = useMemo(() => {
+    const q = iconQuery.trim().toLowerCase();
+    return ICON_LIBRARY.filter((icon) => {
+      if (iconFilter !== "all" && icon.category !== iconFilter) return false;
+      if (!q) return true;
+      return icon.label.toLowerCase().includes(q) || icon.id.includes(q);
+    });
+  }, [iconQuery, iconFilter]);
+
   useEffect(() => {
     setSettings(loadSettings());
     void listSavedTemplates().then(setSavedTemplates);
   }, []);
 
-  useEffect(() => {
-    if (selected?.type === "text") {
-      setPanel("props");
-    }
-  }, [selectedId, selected?.type]);
-
   const requestTextEdit = (id: string) => {
     setSelectedId(id);
-    setPanel("props");
     window.setTimeout(() => textContentRef.current?.focus(), 0);
   };
 
@@ -86,21 +99,21 @@ export default function EditorApp() {
     setElements(next);
   }, [elements]);
 
-  const undo = () => {
+  const undo = useCallback(() => {
     const prev = undoStack.at(-1);
     if (!prev) return;
     setRedoStack((r) => [...r, cloneElements(elements)]);
     setElements(prev);
     setUndoStack((u) => u.slice(0, -1));
-  };
+  }, [elements, undoStack]);
 
-  const redo = () => {
+  const redo = useCallback(() => {
     const next = redoStack.at(-1);
     if (!next) return;
     setUndoStack((u) => [...u, cloneElements(elements)]);
     setElements(next);
     setRedoStack((r) => r.slice(0, -1));
-  };
+  }, [elements, redoStack]);
 
   const updateElement = (id: string, patch: Partial<EditorElement>) => {
     setElements((curr) =>
@@ -108,34 +121,44 @@ export default function EditorApp() {
     );
   };
 
+  const labelCenter = () => {
+    const s = LABEL_SIZES[labelSizeId];
+    return { x: s.width / 2, y: s.height / 2 };
+  };
+
   const addText = () => {
+    const spec = LABEL_SIZES[labelSizeId];
+    const { y } = labelCenter();
     const el: TextElement = {
       id: uuid(),
       type: "text",
-      x: 30,
-      y: 200,
+      x: 40,
+      y: y - 28,
       text: "Nieuwe tekst",
       fontSize: 56,
       fontStyle: "normal",
       fill: "#000000",
-      width: 874,
-      align: "left",
+      width: spec.width - 80,
+      align: "center",
     };
     pushHistory([...elements, el]);
     setSelectedId(el.id);
-    setPanel("props");
+    window.setTimeout(() => textContentRef.current?.focus(), 0);
   };
 
   const addRect = () => {
+    const { x, y } = labelCenter();
+    const width = 240;
+    const height = 140;
     pushHistory([
       ...elements,
       {
         id: uuid(),
         type: "rect",
-        x: 40,
-        y: 300,
-        width: 220,
-        height: 120,
+        x: x - width / 2,
+        y: y - height / 2,
+        width,
+        height,
         stroke: "#000000",
         strokeWidth: 3,
       },
@@ -143,6 +166,8 @@ export default function EditorApp() {
   };
 
   const addLine = () => {
+    const spec = LABEL_SIZES[labelSizeId];
+    const { y } = labelCenter();
     pushHistory([
       ...elements,
       {
@@ -150,7 +175,7 @@ export default function EditorApp() {
         type: "line",
         x: 0,
         y: 0,
-        points: [30, 500, 276, 500],
+        points: [40, y, spec.width - 40, y],
         stroke: "#000000",
         strokeWidth: 3,
       },
@@ -158,23 +183,21 @@ export default function EditorApp() {
   };
 
   const addIcon = (iconId: string) => {
+    const { x, y } = labelCenter();
+    const id = uuid();
     pushHistory([
       ...elements,
       {
-        id: uuid(),
+        id,
         type: "icon",
-        x: 100,
-        y: 200,
+        x: x - ICON_SIZE / 2,
+        y: y - ICON_SIZE / 2,
         iconId,
-        width: 80,
-        height: 80,
+        width: ICON_SIZE,
+        height: ICON_SIZE,
       },
     ]);
-  };
-
-  const labelCenter = () => {
-    const s = LABEL_SIZES[labelSizeId];
-    return { x: s.width / 2, y: s.height / 2 };
+    setSelectedId(id);
   };
 
   const applyTemplate = (templateElements: EditorElement[]) => {
@@ -206,10 +229,25 @@ export default function EditorApp() {
     );
   };
 
-  const deleteSelected = () => {
+  const deleteSelected = useCallback(() => {
     if (!selectedId) return;
     pushHistory(elements.filter((e) => e.id !== selectedId));
     setSelectedId(null);
+  }, [elements, pushHistory, selectedId]);
+
+  const duplicateSelected = useCallback(() => {
+    if (!selected) return;
+    const copy = structuredClone(selected);
+    copy.id = uuid();
+    copy.x += 24;
+    copy.y += 24;
+    pushHistory([...elements, copy]);
+    setSelectedId(copy.id);
+  }, [elements, pushHistory, selected]);
+
+  const alignSelectedText = (align: TextElement["align"]) => {
+    if (!selected || selected.type !== "text") return;
+    updateElement(selected.id, { align });
   };
 
   const apiHeaders = (): HeadersInit => {
@@ -325,6 +363,35 @@ export default function EditorApp() {
     setStatus(`Sjabloon opgeslagen: ${entry.name}`);
   };
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target)) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        duplicateSelected();
+        return;
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        deleteSelected();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [deleteSelected, duplicateSelected, redo, undo]);
+
   const spec = LABEL_SIZES[labelSizeId];
   if (!spec) {
     return (
@@ -337,33 +404,30 @@ export default function EditorApp() {
   return (
     <div className="app-shell">
       <header className="top-bar">
-        <h1>BrotherDruk</h1>
-        <div className="top-controls">
-          <label>
-            Formaat{" "}
-            <select value={labelSizeId} disabled>
-              <option value={labelSizeId}>{spec.name}</option>
-            </select>
-          </label>
-          <label>
-            Zoom{" "}
-            <input
-              type="range"
-              min={30}
-              max={120}
-              value={zoom}
-              onChange={(e) => setZoom(parseInt(e.target.value, 10))}
-            />
-            {zoom}%
-          </label>
+        <div className="brand">
+          <span className="brand-mark">BD</span>
+          <div>
+            <h1>BrotherDruk</h1>
+            <p className="brand-meta">{spec.name} · DK-22205</p>
+          </div>
+        </div>
+        <div className="top-actions">
           <button type="button" className="btn" onClick={undo} disabled={!undoStack.length}>
             Ongedaan
           </button>
           <button type="button" className="btn" onClick={redo} disabled={!redoStack.length}>
             Opnieuw
           </button>
-          <button type="button" className="btn" onClick={() => void checkStatus()}>
-            Status
+          <button type="button" className="btn btn-ghost" onClick={() => void checkStatus()}>
+            Printer
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={printing}
+            onClick={() => void printLabel()}
+          >
+            {printing ? "Bezig…" : "Druk af"}
           </button>
         </div>
       </header>
@@ -373,58 +437,36 @@ export default function EditorApp() {
       )}
 
       <div className="main-area">
-        <section className="canvas-panel">
-          <LabelCanvas
-            ref={canvasRef}
-            labelSizeId={labelSizeId}
-            elements={elements}
-            selectedId={selectedId}
-            zoom={zoom}
-            onSelect={setSelectedId}
-            onChangeElement={updateElement}
-            onRequestTextEdit={requestTextEdit}
-          />
-        </section>
-
-        <aside className="side-panel">
-          <div className="panel-section">
+        <aside className="library-panel">
+          <nav className="rail-tabs" aria-label="Bibliotheek">
             <button
               type="button"
-              className={`btn${panel === "templates" ? " active" : ""}`}
-              onClick={() => setPanel("templates")}
+              className={`btn${library === "templates" ? " active" : ""}`}
+              onClick={() => setLibrary("templates")}
             >
               Sjablonen
-            </button>{" "}
+            </button>
             <button
               type="button"
-              className={`btn${panel === "icons" ? " active" : ""}`}
-              onClick={() => setPanel("icons")}
+              className={`btn${library === "icons" ? " active" : ""}`}
+              onClick={() => setLibrary("icons")}
             >
               Figuurtjes
-            </button>{" "}
-            <button
-              type="button"
-              className={`btn${panel === "props" ? " active" : ""}`}
-              onClick={() => setPanel("props")}
-            >
-              Eigenschappen
-            </button>{" "}
-            <button
-              type="button"
-              className={`btn${panel === "settings" ? " active" : ""}`}
-              onClick={() => setPanel("settings")}
-            >
-              Instellingen
             </button>
-          </div>
+            <button
+              type="button"
+              className={`btn${library === "shapes" ? " active" : ""}`}
+              onClick={() => setLibrary("shapes")}
+            >
+              Vormen
+            </button>
+          </nav>
 
-          {panel === "templates" && (
+          {library === "templates" && (
             <div className="panel-section">
-              <h2>Sjablonen</h2>
+              <h2>Startpunt</h2>
               <div className="field">
-                <label htmlFor="template-scale">
-                  Sjabloongrootte bij laden: {templateScale}%
-                </label>
+                <label htmlFor="template-scale">Grootte bij laden: {templateScale}%</label>
                 <input
                   id="template-scale"
                   type="range"
@@ -440,14 +482,15 @@ export default function EditorApp() {
                   <button
                     key={t.id}
                     type="button"
-                    className="btn"
+                    className="template-card"
                     onClick={() => applyTemplate(t.elements)}
                   >
-                    {t.name}
+                    <strong>{t.name}</strong>
+                    <span>{t.description}</span>
                   </button>
                 ))}
               </div>
-              <h2>Opgeslagen</h2>
+              <h2 style={{ marginTop: "1.15rem" }}>Opgeslagen</h2>
               <div className="field">
                 <label htmlFor="save-name">Naam</label>
                 <input
@@ -461,18 +504,19 @@ export default function EditorApp() {
               </button>
               <div className="template-list" style={{ marginTop: "0.75rem" }}>
                 {savedTemplates.map((t) => (
-                  <div key={t.id} style={{ display: "flex", gap: "0.5rem" }}>
+                  <div key={t.id} className="saved-row">
                     <button
                       type="button"
-                      className="btn"
+                      className="template-card"
                       style={{ flex: 1 }}
                       onClick={() => applyTemplate(t.document.elements)}
                     >
-                      {t.name}
+                      <strong>{t.name}</strong>
                     </button>
                     <button
                       type="button"
                       className="btn btn-danger"
+                      aria-label="Verwijderen"
                       onClick={() =>
                         void deleteTemplate(t.id).then(async () =>
                           setSavedTemplates(await listSavedTemplates()),
@@ -487,15 +531,44 @@ export default function EditorApp() {
             </div>
           )}
 
-          {panel === "icons" && (
+          {library === "icons" && (
             <div className="panel-section">
               <h2>Figuurtjes</h2>
+              <div className="field">
+                <label htmlFor="icon-search">Zoeken</label>
+                <input
+                  id="icon-search"
+                  value={iconQuery}
+                  onChange={(e) => setIconQuery(e.target.value)}
+                  placeholder="bijv. infuus, hart, koel"
+                />
+              </div>
+              <div className="chip-row">
+                {(Object.keys(ICON_CATEGORY_LABELS) as IconFilter[]).map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`chip${iconFilter === id ? " active" : ""}`}
+                    onClick={() => setIconFilter(id)}
+                  >
+                    {ICON_CATEGORY_LABELS[id]}
+                  </button>
+                ))}
+              </div>
+              <p className="hint" style={{ marginTop: 0 }}>
+                Klik om in het midden te plaatsen. {filteredIcons.length} figuurtjes.
+              </p>
               <div className="icon-grid">
-                {ICON_LIBRARY.map((icon) => (
+                {filteredIcons.map((icon) => (
                   <button
                     key={icon.id}
                     type="button"
                     className="icon-btn"
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData("text/plain", icon.id);
+                      e.dataTransfer.effectAllowed = "copy";
+                    }}
                     onClick={() => addIcon(icon.id)}
                   >
                     <img src={icon.src} alt="" />
@@ -506,165 +579,228 @@ export default function EditorApp() {
             </div>
           )}
 
-          {panel === "props" && (
+          {library === "shapes" && (
             <div className="panel-section">
-              <h2>Eigenschappen</h2>
-              {!selected && <p style={{ color: "var(--muted)" }}>Selecteer een element op het label.</p>}
-              {selected?.type === "text" && (
-                <>
-                  <div className="field">
-                    <label htmlFor="text-content">Tekst</label>
-                    <textarea
-                      ref={textContentRef}
-                      id="text-content"
-                      rows={3}
-                      value={selected.text}
-                      onChange={(e) => updateElement(selected.id, { text: e.target.value })}
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="text-size">Lettergrootte ({selected.fontSize})</label>
-                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() =>
-                          updateElement(selected.id, {
-                            fontSize: Math.max(8, selected.fontSize - 8),
-                          })
-                        }
-                      >
-                        A−
-                      </button>
-                      <input
-                        id="text-size"
-                        type="range"
-                        min={16}
-                        max={200}
-                        step={2}
-                        value={selected.fontSize}
-                        style={{ flex: 1 }}
-                        onChange={(e) =>
-                          updateElement(selected.id, {
-                            fontSize: parseInt(e.target.value, 10) || 16,
-                          })
-                        }
-                      />
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() =>
-                          updateElement(selected.id, {
-                            fontSize: Math.min(200, selected.fontSize + 8),
-                          })
-                        }
-                      >
-                        A+
-                      </button>
-                    </div>
-                  </div>
-                  <div className="field">
-                    <label htmlFor="text-align">Uitlijning</label>
-                    <select
-                      id="text-align"
-                      value={selected.align}
-                      onChange={(e) =>
-                        updateElement(selected.id, {
-                          align: e.target.value as TextElement["align"],
-                        })
-                      }
-                    >
-                      <option value="left">Links</option>
-                      <option value="center">Midden</option>
-                      <option value="right">Rechts</option>
-                    </select>
-                  </div>
-                </>
-              )}
-              {selected && (
-                <>
-                  <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
-                    <button type="button" className="btn" onClick={() => scaleSelected(1.1)}>
-                      Element groter
-                    </button>
-                    <button type="button" className="btn" onClick={() => scaleSelected(0.9)}>
-                      Element kleiner
-                    </button>
-                  </div>
-                  <button type="button" className="btn btn-danger" onClick={deleteSelected}>
-                    Element verwijderen
-                  </button>
-                </>
-              )}
-              {!selected && elements.length > 0 && (
-                <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
-                  Tip: gebruik in de werkbalk &quot;Alles groter&quot; / &quot;Alles kleiner&quot; voor het
-                  hele label.
-                </p>
-              )}
-            </div>
-          )}
-
-          {panel === "settings" && (
-            <div className="panel-section">
-              <h2>Instellingen</h2>
-              <div className="field">
-                <label htmlFor="api-key">API-sleutel (optioneel)</label>
-                <input
-                  id="api-key"
-                  type="password"
-                  value={settings.apiKey ?? ""}
-                  onChange={(e) => persistSettings({ ...settings, apiKey: e.target.value })}
-                  placeholder="Alleen nodig als API_KEY in Docker staat"
-                />
+              <h2>Toevoegen</h2>
+              <div className="shape-list">
+                <button type="button" className="template-card" onClick={addText}>
+                  <strong>Tekst</strong>
+                  <span>Titel, dosis of toelichting</span>
+                </button>
+                <button type="button" className="template-card" onClick={addRect}>
+                  <strong>Rechthoek</strong>
+                  <span>Kader of vak</span>
+                </button>
+                <button type="button" className="template-card" onClick={addLine}>
+                  <strong>Lijn</strong>
+                  <span>Scheiding over de breedte</span>
+                </button>
               </div>
-              <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
-                Standaard praat de app met dezelfde Next.js-server op dit apparaat. Printer:{" "}
-                {process.env.NEXT_PUBLIC_PRINTER_HINT ?? "via server PRINTER_HOST"}.
-              </p>
             </div>
           )}
         </aside>
-      </div>
 
-      <footer className="toolbar">
-        <button type="button" className="btn" onClick={addText}>
-          Tekst
-        </button>
-        <button type="button" className="btn" onClick={addRect}>
-          Rechthoek
-        </button>
-        <button type="button" className="btn" onClick={addLine}>
-          Lijn
-        </button>
-        <button type="button" className="btn" onClick={() => setPanel("icons")}>
-          Figuurtjes
-        </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={elements.length === 0}
-          onClick={() => scaleAllElements(1.1)}
+        <section
+          className="canvas-panel"
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            const iconId = e.dataTransfer.getData("text/plain");
+            if (ICON_LIBRARY.some((icon) => icon.id === iconId)) {
+              addIcon(iconId);
+            }
+          }}
         >
-          Alles groter
-        </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={elements.length === 0}
-          onClick={() => scaleAllElements(0.9)}
-        >
-          Alles kleiner
-        </button>
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={printing}
-          onClick={() => void printLabel()}
-        >
-          {printing ? "Bezig…" : "Druk af"}
-        </button>
-      </footer>
+          <LabelCanvas
+            ref={canvasRef}
+            labelSizeId={labelSizeId}
+            elements={elements}
+            selectedId={selectedId}
+            zoom={zoom}
+            onSelect={setSelectedId}
+            onChangeElement={updateElement}
+            onRequestTextEdit={requestTextEdit}
+          />
+          <div className="canvas-tools">
+            <label>
+              Zoom
+              <input
+                type="range"
+                min={30}
+                max={120}
+                value={zoom}
+                onChange={(e) => setZoom(parseInt(e.target.value, 10))}
+              />
+              {zoom}%
+            </label>
+            <button
+              type="button"
+              className="btn"
+              disabled={elements.length === 0}
+              onClick={() => scaleAllElements(1.1)}
+            >
+              Alles +
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={elements.length === 0}
+              onClick={() => scaleAllElements(0.9)}
+            >
+              Alles −
+            </button>
+          </div>
+        </section>
+
+        <aside className="inspector-panel">
+          <div className="panel-section">
+            <h2>Eigenschappen</h2>
+            {!selected && (
+              <p className="hint">
+                Selecteer een element op het label. Dubbelklik op tekst om te bewerken. Delete verwijdert,
+                Ctrl+D dupliceert.
+              </p>
+            )}
+            {selected?.type === "text" && (
+              <>
+                <div className="field">
+                  <label htmlFor="text-content">Tekst</label>
+                  <textarea
+                    ref={textContentRef}
+                    id="text-content"
+                    rows={3}
+                    value={selected.text}
+                    onChange={(e) => updateElement(selected.id, { text: e.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="text-size">Lettergrootte ({selected.fontSize})</label>
+                  <div className="btn-row" style={{ alignItems: "center" }}>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() =>
+                        updateElement(selected.id, {
+                          fontSize: Math.max(8, selected.fontSize - 8),
+                        })
+                      }
+                    >
+                      A−
+                    </button>
+                    <input
+                      id="text-size"
+                      type="range"
+                      min={16}
+                      max={200}
+                      step={2}
+                      value={selected.fontSize}
+                      style={{ flex: 1 }}
+                      onChange={(e) =>
+                        updateElement(selected.id, {
+                          fontSize: parseInt(e.target.value, 10) || 16,
+                        })
+                      }
+                    />
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() =>
+                        updateElement(selected.id, {
+                          fontSize: Math.min(200, selected.fontSize + 8),
+                        })
+                      }
+                    >
+                      A+
+                    </button>
+                  </div>
+                </div>
+                <div className="field">
+                  <label>Stijl</label>
+                  <div className="btn-row">
+                    <button
+                      type="button"
+                      className={`btn${selected.fontStyle === "normal" ? " active" : ""}`}
+                      onClick={() => updateElement(selected.id, { fontStyle: "normal" })}
+                    >
+                      Normaal
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn${selected.fontStyle === "bold" ? " active" : ""}`}
+                      onClick={() => updateElement(selected.id, { fontStyle: "bold" })}
+                    >
+                      Vet
+                    </button>
+                  </div>
+                </div>
+                <div className="field">
+                  <label>Uitlijning</label>
+                  <div className="btn-row">
+                    <button
+                      type="button"
+                      className={`btn${selected.align === "left" ? " active" : ""}`}
+                      onClick={() => alignSelectedText("left")}
+                    >
+                      Links
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn${selected.align === "center" ? " active" : ""}`}
+                      onClick={() => alignSelectedText("center")}
+                    >
+                      Midden
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn${selected.align === "right" ? " active" : ""}`}
+                      onClick={() => alignSelectedText("right")}
+                    >
+                      Rechts
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+            {selected && (
+              <div className="btn-row">
+                <button type="button" className="btn" onClick={() => scaleSelected(1.1)}>
+                  Groter
+                </button>
+                <button type="button" className="btn" onClick={() => scaleSelected(0.9)}>
+                  Kleiner
+                </button>
+                <button type="button" className="btn" onClick={duplicateSelected}>
+                  Dupliceer
+                </button>
+                <button type="button" className="btn btn-danger" onClick={deleteSelected}>
+                  Verwijder
+                </button>
+              </div>
+            )}
+          </div>
+
+          <details className="settings-block">
+            <summary>Instellingen</summary>
+            <div className="field" style={{ marginTop: "0.75rem" }}>
+              <label htmlFor="api-key">API-sleutel (optioneel)</label>
+              <input
+                id="api-key"
+                type="password"
+                value={settings.apiKey ?? ""}
+                onChange={(e) => persistSettings({ ...settings, apiKey: e.target.value })}
+                placeholder="Alleen nodig als API_KEY in Docker staat"
+              />
+            </div>
+            <p className="hint">
+              Standaard praat de app met dezelfde Next.js-server op dit apparaat. Printer:{" "}
+              {process.env.NEXT_PUBLIC_PRINTER_HINT ?? "via server PRINTER_HOST"}.
+            </p>
+          </details>
+        </aside>
+      </div>
     </div>
   );
 }
