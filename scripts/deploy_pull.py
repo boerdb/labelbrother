@@ -34,6 +34,10 @@ def main() -> None:
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.connect(HOST, username=USER, password=PASSWORD, timeout=30)
+    run(
+        ssh,
+        f"cd {REMOTE_DIR} && git checkout -- web/public/icons/app-192.png web/public/icons/app-512.png 2>/dev/null || true",
+    )
     run(ssh, f"cd {REMOTE_DIR} && git pull")
     run(ssh, f"cd {REMOTE_DIR} && npm ci")
     run(ssh, f"cd {REMOTE_DIR} && npm run build")
