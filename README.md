@@ -13,7 +13,7 @@ python scripts/deploy_git_init.py   # eerste keer
 python scripts/deploy_pull.py       # updates
 ```
 
-App op LAN: **http://192.168.1.32:3022**
+App: **https://brother.clvs.nl**
 
 ## Snel starten (lokaal op je PC — dev)
 

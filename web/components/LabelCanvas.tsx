@@ -27,6 +27,17 @@ interface LabelCanvasProps {
   onRequestTextEdit?: (id: string) => void;
 }
 
+const MIN_BOX = 24;
+const MIN_FONT = 8;
+
+function bakeScale(node: Konva.Node) {
+  const scaleX = node.scaleX();
+  const scaleY = node.scaleY();
+  node.scaleX(1);
+  node.scaleY(1);
+  return { scaleX, scaleY, x: node.x(), y: node.y() };
+}
+
 function useIconImage(src: string | undefined) {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   useEffect(() => {
@@ -42,20 +53,20 @@ function useIconImage(src: string | undefined) {
   return image;
 }
 
-function IconNode({
-  element,
-  isSelected,
-  onSelect,
-  onDragEnd,
-}: {
-  element: Extract<EditorElement, { type: "icon" }>;
-  isSelected: boolean;
-  onSelect: () => void;
-  onDragEnd: (x: number, y: number) => void;
-}) {
+const IconNode = forwardRef<
+  Konva.Image,
+  {
+    element: Extract<EditorElement, { type: "icon" }>;
+    isSelected: boolean;
+    onSelect: () => void;
+    onDragEnd: (x: number, y: number) => void;
+    onTransformEnd: (patch: { x: number; y: number; width: number; height: number }) => void;
+  }
+>(function IconNode({ element, isSelected, onSelect, onDragEnd, onTransformEnd }, ref) {
   const image = useIconImage(getIconSrc(element.iconId));
   return (
     <KonvaImage
+      ref={ref}
       image={image ?? undefined}
       x={element.x}
       y={element.y}
@@ -65,11 +76,20 @@ function IconNode({
       onClick={onSelect}
       onTap={onSelect}
       onDragEnd={(e) => onDragEnd(e.target.x(), e.target.y())}
+      onTransformEnd={(e) => {
+        const { scaleX, scaleY, x, y } = bakeScale(e.target);
+        onTransformEnd({
+          x,
+          y,
+          width: Math.max(MIN_BOX, Math.round(element.width * scaleX)),
+          height: Math.max(MIN_BOX, Math.round(element.height * scaleY)),
+        });
+      }}
       stroke={isSelected ? "#1a5fb4" : undefined}
       strokeWidth={isSelected ? 2 : 0}
     />
   );
-}
+});
 
 const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function LabelCanvas(
   { labelSizeId, elements, selectedId, zoom, onSelect, onChangeElement, onRequestTextEdit },
@@ -93,16 +113,15 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
   }));
 
   const selectedElement = elements.find((el) => el.id === selectedId);
+  const attachSelected = (node: Konva.Node | null) => {
+    selectedRef.current = node;
+  };
 
   useEffect(() => {
     const tr = transformerRef.current;
     const node = selectedRef.current;
     if (!tr) return;
-    const useTransformer =
-      node &&
-      selectedElement &&
-      selectedElement.type !== "text";
-    if (useTransformer) {
+    if (node && selectedElement) {
       tr.nodes([node]);
     } else {
       tr.nodes([]);
@@ -111,6 +130,14 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
   }, [selectedId, elements, selectedElement]);
 
   const scale = zoom / 100;
+  const keepRatio =
+    selectedElement?.type === "icon" || selectedElement?.type === "text";
+  const enabledAnchors =
+    selectedElement?.type === "line"
+      ? ["middle-left", "middle-right"]
+      : keepRatio
+        ? ["top-left", "top-right", "bottom-left", "bottom-right"]
+        : undefined;
 
   return (
     <div className="canvas-frame">
@@ -150,13 +177,7 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
               return (
                 <Rect
                   key={el.id}
-                  ref={
-                    isSelected
-                      ? (node) => {
-                          selectedRef.current = node;
-                        }
-                      : undefined
-                  }
+                  ref={isSelected ? attachSelected : undefined}
                   x={el.x}
                   y={el.y}
                   width={el.width}
@@ -170,6 +191,15 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
                   onDragEnd={(e) =>
                     onChangeElement(el.id, { x: e.target.x(), y: e.target.y() })
                   }
+                  onTransformEnd={(e) => {
+                    const { scaleX, scaleY, x, y } = bakeScale(e.target);
+                    onChangeElement(el.id, {
+                      x,
+                      y,
+                      width: Math.max(MIN_BOX, Math.round(el.width * scaleX)),
+                      height: Math.max(MIN_BOX, Math.round(el.height * scaleY)),
+                    });
+                  }}
                 />
               );
             }
@@ -177,13 +207,7 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
               return (
                 <Line
                   key={el.id}
-                  ref={
-                    isSelected
-                      ? (node) => {
-                          selectedRef.current = node;
-                        }
-                      : undefined
-                  }
+                  ref={isSelected ? attachSelected : undefined}
                   points={el.points}
                   stroke={el.stroke}
                   strokeWidth={el.strokeWidth}
@@ -200,16 +224,30 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
                     });
                     e.target.position({ x: 0, y: 0 });
                   }}
+                  onTransformEnd={(e) => {
+                    const node = e.target;
+                    const { scaleX, scaleY, x, y } = bakeScale(node);
+                    node.position({ x: 0, y: 0 });
+                    onChangeElement(el.id, {
+                      points: el.points.map((p, i) =>
+                        i % 2 === 0 ? p * scaleX + x : p * scaleY + y,
+                      ),
+                      x: 0,
+                      y: 0,
+                    });
+                  }}
                 />
               );
             }
             return (
               <IconNode
                 key={el.id}
+                ref={isSelected ? attachSelected : undefined}
                 element={el}
                 isSelected={isSelected}
                 onSelect={() => onSelect(el.id)}
                 onDragEnd={(x, y) => onChangeElement(el.id, { x, y })}
+                onTransformEnd={(patch) => onChangeElement(el.id, patch)}
               />
             );
           })}
@@ -220,6 +258,7 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
               return (
                 <Text
                   key={el.id}
+                  ref={isSelected ? attachSelected : undefined}
                   x={el.x}
                   y={el.y}
                   width={el.width}
@@ -238,10 +277,35 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
                   onDragEnd={(e) =>
                     onChangeElement(el.id, { x: e.target.x(), y: e.target.y() })
                   }
+                  onTransformEnd={(e) => {
+                    const { scaleX, scaleY, x, y } = bakeScale(e.target);
+                    const factor = (Math.abs(scaleX) + Math.abs(scaleY)) / 2;
+                    onChangeElement(el.id, {
+                      x,
+                      y,
+                      width: Math.max(40, Math.round(el.width * scaleX)),
+                      fontSize: Math.max(MIN_FONT, Math.round(el.fontSize * factor)),
+                    });
+                  }}
                 />
               );
             })}
-          <Transformer ref={transformerRef} rotateEnabled={false} />
+          <Transformer
+            ref={transformerRef}
+            rotateEnabled={false}
+            keepRatio={keepRatio}
+            enabledAnchors={enabledAnchors}
+            anchorSize={10}
+            borderStroke="#1a5fb4"
+            anchorStroke="#1a5fb4"
+            anchorFill="#ffffff"
+            boundBoxFunc={(oldBox, newBox) => {
+              if (Math.abs(newBox.width) < MIN_BOX || Math.abs(newBox.height) < MIN_BOX) {
+                return oldBox;
+              }
+              return newBox;
+            }}
+          />
         </Layer>
       </Stage>
     </div>

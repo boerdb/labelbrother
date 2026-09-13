@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://brother.clvs.nl"),
   title: "BrotherDruk",
   description: "Label ontwerpen en afdrukken op Brother QL",
   applicationName: "BrotherDruk",

@@ -10,7 +10,7 @@ Zelfde aanpak als Rekenmachine / Scheikunde / VVH-js.
 - **Geen Docker** — Node draait de app; print gaat vanaf de server naar de Brother op `192.168.1.215:9100` (zelfde LAN)
 
 ```
-Telefoon/PC → http://192.168.1.32:3022 → Next.js (PM2)
+Telefoon/PC → https://brother.clvs.nl → Next.js (PM2 op 192.168.1.32:3022)
                               ↓
                     Brother QL-820 @ 192.168.1.215:9100
 ```
@@ -63,7 +63,7 @@ curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3022/
 curl -s http://127.0.0.1:3022/api/status
 ```
 
-App: **http://192.168.1.32:3022**
+App: **https://brother.clvs.nl** (intern: `http://192.168.1.32:3022`)
 
 ## PWA / HTTPS
 
