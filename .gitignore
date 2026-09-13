@@ -1,0 +1,10 @@
+node_modules/
+dist/
+web/dist/
+web/.next/
+.next/
+.env
+*.log
+**/certs/*.pem
+!**/certs/.gitkeep
+web/public/sw.js

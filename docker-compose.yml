@@ -1,0 +1,22 @@
+services:
+  brotherdruk:
+    build: .
+    ports:
+      - "8443:8443"
+    environment:
+      PRINTER_HOST: "192.168.1.215"
+      PRINTER_PORT: "9100"
+      PRINTER_DEVICE_KEY: "QL_820NWBc"
+      DEFAULT_LABEL: "85x62"
+      # PRINTER_MODEL wordt door de driver afgeleid; optioneel voor logging
+      API_KEY: ""
+      PORT: "8443"
+      NODE_ENV: "production"
+      SSL_KEY: "/certs/key.pem"
+      SSL_CERT: "/certs/cert.pem"
+    volumes:
+      - brotherdruk-certs:/certs
+    restart: unless-stopped
+
+volumes:
+  brotherdruk-certs:
