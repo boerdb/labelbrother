@@ -257,19 +257,51 @@ export default function EditorApp() {
         method: "POST",
         headers: apiHeaders(),
         body: JSON.stringify({ labelSize: labelSizeId, image }),
+        signal: AbortSignal.timeout(120_000),
       });
-      let data: { ok?: boolean; error?: string; jobId?: string };
+      let data: { ok?: boolean; error?: string; jobId?: string; async?: boolean };
       try {
-        data = (await res.json()) as { ok: boolean; error?: string; jobId?: string };
+        data = (await res.json()) as typeof data;
       } catch {
         throw new Error(`Server antwoordde niet (${res.status}). Draait de app op dezelfde URL?`);
       }
-      if (!res.ok || !data.ok) {
+      if (!res.ok || !data.ok || !data.jobId) {
         throw new Error(data.error ?? `Afdrukken mislukt (HTTP ${res.status})`);
       }
-      setStatus(`Label verzonden (${data.jobId?.slice(0, 8) ?? "ok"})`);
+
+      const jobId = data.jobId;
+      const pollDeadline = Date.now() + 120_000;
+      while (Date.now() < pollDeadline) {
+        setStatus("Label naar printer…");
+        await new Promise((r) => setTimeout(r, 500));
+        const poll = await fetch(`/api/print?jobId=${encodeURIComponent(jobId)}`, {
+          headers: apiHeaders(),
+          signal: AbortSignal.timeout(15_000),
+        });
+        let pollData: { ok?: boolean; status?: string; error?: string };
+        try {
+          pollData = (await poll.json()) as typeof pollData;
+        } catch {
+          continue;
+        }
+        if (!poll.ok || !pollData.ok) {
+          throw new Error(pollData.error ?? "Printstatus onbekend");
+        }
+        if (pollData.status === "done") {
+          setStatus(`Label verzonden (${jobId.slice(0, 8)})`);
+          return;
+        }
+        if (pollData.status === "error") {
+          throw new Error(pollData.error ?? "Print mislukt op de server");
+        }
+      }
+      throw new Error("Print duurde te lang — controleer de printer");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Afdrukken mislukt");
+      if (e instanceof DOMException && e.name === "TimeoutError") {
+        setError("Verbinding time-out (vaak op iOS). Probeer opnieuw of ververs de pagina.");
+      } else {
+        setError(e instanceof Error ? e.message : "Afdrukken mislukt");
+      }
       setStatus(null);
     } finally {
       setPrinting(false);
