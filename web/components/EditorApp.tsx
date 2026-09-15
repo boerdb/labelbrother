@@ -90,15 +90,41 @@ export default function EditorApp() {
     [elements, selectedId],
   );
 
+  const iconPackReady = useMemo(() => {
+    if (iconPackId === "builtin") return true;
+    return downloadedPacks.includes(iconPackId);
+  }, [iconPackId, downloadedPacks]);
+
+  const iconsForPack = useMemo(() => {
+    if (iconPackId === "builtin") return ICON_LIBRARY;
+    if (!iconPackReady) return [];
+    return getExtraIcons(iconPackId);
+  }, [iconPackId, iconPackReady, iconPackTick]);
+
+  const availableIconFilters = useMemo(() => {
+    const cats = new Set(iconsForPack.map((icon) => icon.category));
+    const filters: IconFilter[] = ["all"];
+    for (const key of Object.keys(ICON_CATEGORY_LABELS) as IconFilter[]) {
+      if (key === "all") continue;
+      if (cats.has(key)) filters.push(key);
+    }
+    return filters;
+  }, [iconsForPack]);
+
+  useEffect(() => {
+    if (iconFilter !== "all" && !availableIconFilters.includes(iconFilter)) {
+      setIconFilter(availableIconFilters.includes("medisch") ? "medisch" : "all");
+    }
+  }, [availableIconFilters, iconFilter]);
+
   const filteredIcons = useMemo(() => {
     const q = iconQuery.trim().toLowerCase();
-    const source = iconPackId === "builtin" ? ICON_LIBRARY : getExtraIcons(iconPackId);
-    return source.filter((icon) => {
+    return iconsForPack.filter((icon) => {
       if (iconFilter !== "all" && icon.category !== iconFilter) return false;
       if (!q) return true;
       return icon.label.toLowerCase().includes(q) || icon.id.includes(q);
     });
-  }, [iconQuery, iconFilter, iconPackId, iconPackTick]);
+  }, [iconQuery, iconFilter, iconsForPack]);
 
   useEffect(() => {
     setSettings(loadSettings());
@@ -225,7 +251,7 @@ export default function EditorApp() {
       await saveIconPack({ id: packId, icons: data.icons, updatedAt: Date.now() });
       setDownloadedPacks((prev) => [...new Set([...prev, packId])]);
       setIconPackTick((n) => n + 1);
-      setStatus(`${data.icons.length} figuurtjes geladen`);
+      setStatus(`${data.icons.length} icons geladen`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Download mislukt");
     } finally {
@@ -244,10 +270,15 @@ export default function EditorApp() {
 
   const selectIconPack = (packId: string) => {
     setIconPackId(packId);
-    setIconFilter(packId === "builtin" ? "medisch" : "all");
-    const pack = getIconPack(packId);
-    if (pack && !pack.builtin && !downloadedPacks.includes(packId)) {
-      void downloadIconPack(packId);
+    setIconQuery("");
+    if (packId === "builtin") {
+      setIconFilter("medisch");
+      return;
+    }
+    if (downloadedPacks.includes(packId)) {
+      const icons = getExtraIcons(packId);
+      const cats = new Set(icons.map((icon) => icon.category));
+      setIconFilter(cats.has("medisch") ? "medisch" : "all");
     }
   };
 
@@ -303,6 +334,16 @@ export default function EditorApp() {
     pushHistory(elements.filter((e) => e.id !== selectedId));
     setSelectedId(null);
   }, [elements, pushHistory, selectedId]);
+
+  const clearCanvas = useCallback(() => {
+    if (elements.length === 0) return;
+    if (!window.confirm("Alles van dit label wissen? Je kunt dit met Ongedaan terugdraaien.")) {
+      return;
+    }
+    pushHistory([]);
+    setSelectedId(null);
+    setStatus("Label gewist");
+  }, [elements.length, pushHistory]);
 
   const duplicateSelected = useCallback(() => {
     if (!selected) return;
@@ -487,6 +528,14 @@ export default function EditorApp() {
           <button type="button" className="btn" onClick={redo} disabled={!redoStack.length}>
             Opnieuw
           </button>
+          <button
+            type="button"
+            className="btn btn-danger"
+            disabled={elements.length === 0}
+            onClick={clearCanvas}
+          >
+            Label wissen
+          </button>
           <button type="button" className="btn btn-ghost" onClick={() => void checkStatus()}>
             Printer
           </button>
@@ -520,7 +569,7 @@ export default function EditorApp() {
               className={`btn${library === "icons" ? " active" : ""}`}
               onClick={() => setLibrary("icons")}
             >
-              Figuurtjes
+              Icons
             </button>
             <button
               type="button"
@@ -602,7 +651,7 @@ export default function EditorApp() {
 
           {library === "icons" && (
             <div className="panel-section">
-              <h2>Figuurtjes</h2>
+              <h2>Icons</h2>
               <div className="field">
                 <label htmlFor="icon-pack">Set</label>
                 <select
@@ -631,7 +680,7 @@ export default function EditorApp() {
                 <div className="btn-row" style={{ marginBottom: "0.75rem" }}>
                   <button
                     type="button"
-                    className="btn"
+                    className="btn btn-primary"
                     disabled={iconBusy}
                     onClick={() => void downloadIconPack(iconPackId)}
                   >
@@ -645,6 +694,7 @@ export default function EditorApp() {
                     <button
                       type="button"
                       className="btn btn-danger"
+                      disabled={iconBusy}
                       onClick={() => void removeIconPack(iconPackId)}
                     >
                       Verwijder set
@@ -652,48 +702,66 @@ export default function EditorApp() {
                   )}
                 </div>
               )}
-              <div className="field">
-                <label htmlFor="icon-search">Zoeken</label>
-                <input
-                  id="icon-search"
-                  value={iconQuery}
-                  onChange={(e) => setIconQuery(e.target.value)}
-                  placeholder="bijv. infuus, hart, koel"
-                />
-              </div>
-              <div className="chip-row">
-                {(Object.keys(ICON_CATEGORY_LABELS) as IconFilter[]).map((id) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className={`chip${iconFilter === id ? " active" : ""}`}
-                    onClick={() => setIconFilter(id)}
-                  >
-                    {ICON_CATEGORY_LABELS[id]}
-                  </button>
-                ))}
-              </div>
-              <p className="hint" style={{ marginTop: 0 }}>
-                Klik om in het midden te plaatsen. {filteredIcons.length} figuurtjes.
-              </p>
-              <div className="icon-grid">
-                {filteredIcons.map((icon) => (
-                  <button
-                    key={icon.id}
-                    type="button"
-                    className="icon-btn"
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData("text/plain", icon.id);
-                      e.dataTransfer.effectAllowed = "copy";
-                    }}
-                    onClick={() => addIcon(icon.id)}
-                  >
-                    <img src={icon.src} alt="" />
-                    <span>{icon.label}</span>
-                  </button>
-                ))}
-              </div>
+              {!iconPackReady && !getIconPack(iconPackId)?.builtin && (
+                <p className="hint">
+                  {iconBusy
+                    ? "Icons worden opgehaald…"
+                    : `Deze set staat nog niet op dit apparaat. Download om ${getIconPack(iconPackId)?.icons.length ?? 0} icons te gebruiken (eenmalig, daarna offline).`}
+                </p>
+              )}
+              {iconPackReady && (
+                <>
+                  <div className="field">
+                    <label htmlFor="icon-search">Zoeken</label>
+                    <input
+                      id="icon-search"
+                      value={iconQuery}
+                      onChange={(e) => setIconQuery(e.target.value)}
+                      placeholder="bijv. infuus, hart, koel"
+                    />
+                  </div>
+                  {availableIconFilters.length > 1 && (
+                    <div className="chip-row">
+                      {availableIconFilters.map((id) => (
+                        <button
+                          key={id}
+                          type="button"
+                          className={`chip${iconFilter === id ? " active" : ""}`}
+                          onClick={() => setIconFilter(id)}
+                        >
+                          {ICON_CATEGORY_LABELS[id]}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="hint" style={{ marginTop: 0 }}>
+                    Klik om in het midden te plaatsen. {filteredIcons.length} icons
+                    {filteredIcons.length !== iconsForPack.length ? ` (van ${iconsForPack.length})` : ""}.
+                  </p>
+                  <div className="icon-grid">
+                    {filteredIcons.length === 0 ? (
+                      <p className="hint">Geen icons voor deze zoekopdracht of categorie.</p>
+                    ) : (
+                      filteredIcons.map((icon) => (
+                        <button
+                          key={icon.id}
+                          type="button"
+                          className="icon-btn"
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData("text/plain", icon.id);
+                            e.dataTransfer.effectAllowed = "copy";
+                          }}
+                          onClick={() => addIcon(icon.id)}
+                        >
+                          <img src={icon.src} alt="" />
+                          <span>{icon.label}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           )}
 

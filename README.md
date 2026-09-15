@@ -1,6 +1,6 @@
 # BrotherDruk
 
-Installbare **Next.js PWA** om labels te ontwerpen (tekst, vormen, figuurtjes) en af te drukken op een **Brother QL-820NWB(c)** op het thuisnetwerk.
+Installbare **Next.js PWA** om labels te ontwerpen (tekst, vormen, icons) en af te drukken op een **Brother QL-820NWB(c)** op het thuisnetwerk.
 
 Standaard printer: `192.168.1.215` (TCP poort **9100**). Standaard label: **85×62 mm** ontwerp op **DK-22205** (62 mm doorlopend, RollW62) — zelfde instelling als [`C:\DEV\etiketten`](C:\DEV\etiketten): vóór print **90° gedraaid** naar 62×85 mm op de rol (954×696 px ontwerp → 696×954 px print).
 
