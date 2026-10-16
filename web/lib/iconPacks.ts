@@ -401,29 +401,31 @@ export function packIconId(packId: string, name: string): string {
   return `${packId}:${name}`;
 }
 
-export function toPrintSvgDataUrl(body: string, size = 24): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" fill="none" stroke="#000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${body.replace(/currentColor/gi, "#000")}</svg>`;
+/** Iconify-bodies gebruiken currentColor; zwart maken en de eigen viewBox per icon respecteren. */
+export function toPrintSvgDataUrl(body: string, width = 24, height = width): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">${body.replace(/currentColor/gi, "#000")}</svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-export function iconsFromIconify(
-  pack: IconPackDef,
-  payload: {
-    icons?: Record<string, { body: string }>;
-    width?: number;
-    height?: number;
-  },
-): IconDef[] {
-  const size = payload.width ?? payload.height ?? 24;
+export interface IconifyPayload {
+  icons?: Record<string, { body: string; width?: number; height?: number }>;
+  width?: number;
+  height?: number;
+}
+
+export function iconsFromIconify(pack: IconPackDef, payload: IconifyPayload): IconDef[] {
+  // Iconify laat width/height weg wanneer ze 16 zijn (de standaard).
+  const defaultW = payload.width ?? 16;
+  const defaultH = payload.height ?? 16;
   const result: IconDef[] = [];
   for (const spec of pack.icons) {
-    const body = payload.icons?.[spec.name]?.body;
-    if (!body) continue;
+    const data = payload.icons?.[spec.name];
+    if (!data?.body) continue;
     result.push({
       id: packIconId(pack.id, spec.name),
       label: spec.label,
       category: spec.category,
-      src: toPrintSvgDataUrl(body, size),
+      src: toPrintSvgDataUrl(data.body, data.width ?? defaultW, data.height ?? defaultH),
     });
   }
   return result;

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getIconPack, iconsFromIconify } from "@/lib/iconPacks";
+import { getIconPack, iconsFromIconify, type IconifyPayload } from "@/lib/iconPacks";
 
 const ICONIFY = "https://api.iconify.design";
 
@@ -30,11 +30,7 @@ export async function POST(req: Request) {
     if (!res.ok) {
       throw new Error(`Iconify antwoordde ${res.status}`);
     }
-    const payload = (await res.json()) as {
-      icons?: Record<string, { body: string }>;
-      width?: number;
-      height?: number;
-    };
+    const payload = (await res.json()) as IconifyPayload;
     const icons = iconsFromIconify(pack, payload);
     if (icons.length === 0) {
       throw new Error("Geen iconen in deze set gevonden");

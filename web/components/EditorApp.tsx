@@ -4,45 +4,40 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuid } from "uuid";
 import dynamic from "next/dynamic";
 import type { LabelCanvasHandle } from "@/components/LabelCanvas";
-
-const LabelCanvas = dynamic(() => import("@/components/LabelCanvas"), { ssr: false });
+import { CANVAS_PADDING } from "@/components/LabelCanvas";
+import IconsPanel from "@/components/IconsPanel";
+import Inspector from "@/components/Inspector";
+import TemplatesPanel from "@/components/TemplatesPanel";
+import { Icon, type IconName } from "@/components/ui/Icon";
 import type { EditorElement, TextElement } from "@/lib/editorTypes";
-import { ICON_PACKS, getIconPack } from "@/lib/iconPacks";
-import {
-  ICON_CATEGORY_LABELS,
-  ICON_LIBRARY,
-  getAllIcons,
-  getExtraIcons,
-  registerExtraIcons,
-  unregisterPackIcons,
-  type IconCategory,
-} from "@/lib/icons";
+import { getAllIcons, type IconDef } from "@/lib/icons";
 import { LABEL_SIZES, type LabelSizeId } from "@/lib/labelSizes";
 import { reidElements } from "@/lib/reidElements";
 import { scaleElements } from "@/lib/scaleElements";
-import { BUILTIN_TEMPLATES } from "@/lib/templates";
-import {
-  deleteIconPack,
-  deleteTemplate,
-  listSavedIconPacks,
-  listSavedTemplates,
-  saveIconPack,
-  saveTemplate,
-  type SavedTemplate,
-} from "@/lib/storage";
+
+const LabelCanvas = dynamic(() => import("@/components/LabelCanvas"), { ssr: false });
 
 const SETTINGS_KEY = "brotherdruk-settings";
-const ICON_SIZE = 96;
+const ICON_SIZE = 160;
+const HISTORY_LIMIT = 50;
+const COMPACT_QUERY = "(max-width: 1100px)";
 
 interface AppSettings {
   apiKey: string;
 }
 
-type LibraryTab = "templates" | "icons" | "shapes";
-type IconFilter = "all" | IconCategory;
+type Panel = "add" | "icons" | "templates" | "inspect";
+type PrinterState = "checking" | "online" | "offline";
+type ToastKind = "info" | "success" | "error";
+
+interface Toast {
+  id: number;
+  kind: ToastKind;
+  message: string;
+  action?: { label: string; run: () => void };
+}
 
 function loadSettings(): AppSettings {
-  if (typeof window === "undefined") return { apiKey: "" };
   try {
     const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}") as Partial<AppSettings>;
     return { apiKey: typeof raw.apiKey === "string" ? raw.apiKey : "" };
@@ -51,363 +46,363 @@ function loadSettings(): AppSettings {
   }
 }
 
-function cloneElements(elements: EditorElement[]): EditorElement[] {
-  return structuredClone(elements);
-}
-
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
 }
 
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(false);
+  useEffect(() => {
+    const mql = window.matchMedia(query);
+    const update = () => setMatches(mql.matches);
+    update();
+    mql.addEventListener("change", update);
+    return () => mql.removeEventListener("change", update);
+  }, [query]);
+  return matches;
+}
+
+const PANELS: { id: Panel; label: string; icon: IconName }[] = [
+  { id: "add", label: "Toevoegen", icon: "shapes" },
+  { id: "icons", label: "Icons", icon: "smile" },
+  { id: "templates", label: "Sjablonen", icon: "layout" },
+  { id: "inspect", label: "Eigenschappen", icon: "sliders" },
+];
+
 export default function EditorApp() {
+  const labelSizeId: LabelSizeId = "85x62";
+  const spec = LABEL_SIZES[labelSizeId];
   const canvasRef = useRef<LabelCanvasHandle>(null);
+  const canvasWrapRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const textContentRef = useRef<HTMLTextAreaElement>(null);
-  const [labelSizeId] = useState<LabelSizeId>("85x62");
+  const settingsRef = useRef<HTMLDialogElement>(null);
+  const isCompact = useMediaQuery(COMPACT_QUERY);
+
   const [elements, setElements] = useState<EditorElement[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(42);
-  const [undoStack, setUndoStack] = useState<EditorElement[][]>([]);
-  const [redoStack, setRedoStack] = useState<EditorElement[][]>([]);
-  const [status, setStatus] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const undoRef = useRef<EditorElement[][]>([]);
+  const redoRef = useRef<EditorElement[][]>([]);
+  const [, setHistoryTick] = useState(0);
+  const [panel, setPanel] = useState<Panel>("add");
+  const [zoomMode, setZoomMode] = useState<"fit" | number>("fit");
+  const [fitZoom, setFitZoom] = useState(42);
   const [printing, setPrinting] = useState(false);
-  const [library, setLibrary] = useState<LibraryTab>("templates");
-  const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
+  const [printer, setPrinter] = useState<{ state: PrinterState; message: string }>({
+    state: "checking",
+    message: "Printer controleren…",
+  });
   const [settings, setSettings] = useState<AppSettings>({ apiKey: "" });
-  const [saveName, setSaveName] = useState("Mijn sjabloon");
-  const [templateScale, setTemplateScale] = useState(100);
-  const [iconQuery, setIconQuery] = useState("");
-  const [iconFilter, setIconFilter] = useState<IconFilter>("medisch");
-  const [iconPackId, setIconPackId] = useState("builtin");
-  const [downloadedPacks, setDownloadedPacks] = useState<string[]>([]);
-  const [iconPackTick, setIconPackTick] = useState(0);
-  const [iconBusy, setIconBusy] = useState(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const elementsRef = useRef(elements);
+  elementsRef.current = elements;
 
   const selected = useMemo(
     () => elements.find((e) => e.id === selectedId) ?? null,
     [elements, selectedId],
   );
+  const zoom = zoomMode === "fit" ? fitZoom : zoomMode;
+  const activePanel: Panel = !isCompact && panel === "inspect" ? "add" : panel;
 
-  const iconPackReady = useMemo(() => {
-    if (iconPackId === "builtin") return true;
-    return downloadedPacks.includes(iconPackId);
-  }, [iconPackId, downloadedPacks]);
+  /* ---------- meldingen ---------- */
 
-  const iconsForPack = useMemo(() => {
-    if (iconPackId === "builtin") return ICON_LIBRARY;
-    if (!iconPackReady) return [];
-    return getExtraIcons(iconPackId);
-  }, [iconPackId, iconPackReady, iconPackTick]);
-
-  const availableIconFilters = useMemo(() => {
-    const cats = new Set(iconsForPack.map((icon) => icon.category));
-    const filters: IconFilter[] = ["all"];
-    for (const key of Object.keys(ICON_CATEGORY_LABELS) as IconFilter[]) {
-      if (key === "all") continue;
-      if (cats.has(key)) filters.push(key);
-    }
-    return filters;
-  }, [iconsForPack]);
-
-  useEffect(() => {
-    if (iconFilter !== "all" && !availableIconFilters.includes(iconFilter)) {
-      setIconFilter(availableIconFilters.includes("medisch") ? "medisch" : "all");
-    }
-  }, [availableIconFilters, iconFilter]);
-
-  const filteredIcons = useMemo(() => {
-    const q = iconQuery.trim().toLowerCase();
-    return iconsForPack.filter((icon) => {
-      if (iconFilter !== "all" && icon.category !== iconFilter) return false;
-      if (!q) return true;
-      return icon.label.toLowerCase().includes(q) || icon.id.includes(q);
-    });
-  }, [iconQuery, iconFilter, iconsForPack]);
-
-  useEffect(() => {
-    setSettings(loadSettings());
-    void listSavedTemplates().then(setSavedTemplates);
-    void listSavedIconPacks().then((packs) => {
-      for (const pack of packs) registerExtraIcons(pack.icons);
-      setDownloadedPacks(packs.map((pack) => pack.id));
-      setIconPackTick((n) => n + 1);
-    });
+  const notify = useCallback((kind: ToastKind, message: string, action?: Toast["action"]) => {
+    const id = Date.now() + Math.random();
+    setToasts((prev) => [...prev.slice(-2), { id, kind, message, action }]);
+    window.setTimeout(
+      () => setToasts((prev) => prev.filter((t) => t.id !== id)),
+      kind === "error" ? 8000 : action ? 9000 : 3500,
+    );
   }, []);
 
-  const requestTextEdit = (id: string) => {
-    setSelectedId(id);
-    window.setTimeout(() => textContentRef.current?.focus(), 0);
-  };
+  const dismissToast = (id: number) => setToasts((prev) => prev.filter((t) => t.id !== id));
 
-  const pushHistory = useCallback((next: EditorElement[]) => {
-    setUndoStack((prev) => [...prev.slice(-30), cloneElements(elements)]);
-    setRedoStack([]);
-    setElements(next);
-  }, [elements]);
+  /* ---------- geschiedenis ---------- */
+
+  const snapshot = useCallback(() => {
+    const current = structuredClone(elementsRef.current);
+    const last = undoRef.current.at(-1);
+    if (!last || JSON.stringify(last) !== JSON.stringify(current)) {
+      undoRef.current = [...undoRef.current.slice(-HISTORY_LIMIT), current];
+    }
+    redoRef.current = [];
+    setHistoryTick((n) => n + 1);
+  }, []);
+
+  const commit = useCallback(
+    (next: EditorElement[]) => {
+      snapshot();
+      setElements(next);
+    },
+    [snapshot],
+  );
+
+  const patchLive = useCallback((id: string, patch: Partial<EditorElement>) => {
+    setElements((curr) => curr.map((el) => (el.id === id ? ({ ...el, ...patch } as EditorElement) : el)));
+  }, []);
+
+  const patchCommit = useCallback(
+    (id: string, patch: Partial<EditorElement>) => {
+      snapshot();
+      patchLive(id, patch);
+    },
+    [patchLive, snapshot],
+  );
 
   const undo = useCallback(() => {
-    const prev = undoStack.at(-1);
+    const prev = undoRef.current.at(-1);
     if (!prev) return;
-    setRedoStack((r) => [...r, cloneElements(elements)]);
+    undoRef.current = undoRef.current.slice(0, -1);
+    redoRef.current = [...redoRef.current, structuredClone(elementsRef.current)];
     setElements(prev);
-    setUndoStack((u) => u.slice(0, -1));
-  }, [elements, undoStack]);
+    setHistoryTick((n) => n + 1);
+  }, []);
 
   const redo = useCallback(() => {
-    const next = redoStack.at(-1);
+    const next = redoRef.current.at(-1);
     if (!next) return;
-    setUndoStack((u) => [...u, cloneElements(elements)]);
+    redoRef.current = redoRef.current.slice(0, -1);
+    undoRef.current = [...undoRef.current, structuredClone(elementsRef.current)];
     setElements(next);
-    setRedoStack((r) => r.slice(0, -1));
-  }, [elements, redoStack]);
+    setHistoryTick((n) => n + 1);
+  }, []);
 
-  const updateElement = (id: string, patch: Partial<EditorElement>) => {
-    setElements((curr) =>
-      curr.map((el) => (el.id === id ? ({ ...el, ...patch } as EditorElement) : el)),
-    );
+  /* ---------- selectie ---------- */
+
+  const select = useCallback(
+    (id: string | null) => {
+      setSelectedId(id);
+      if (isCompact) {
+        if (id) setPanel("inspect");
+        else setPanel((p) => (p === "inspect" ? "add" : p));
+      }
+    },
+    [isCompact],
+  );
+
+  useEffect(() => {
+    if (selectedId && !elements.some((e) => e.id === selectedId)) setSelectedId(null);
+  }, [elements, selectedId]);
+
+  const focusText = () => window.setTimeout(() => textContentRef.current?.select(), 30);
+
+  /* ---------- elementen toevoegen ---------- */
+
+  const center = { x: spec.width / 2, y: spec.height / 2 };
+
+  const addElement = (el: EditorElement) => {
+    commit([...elementsRef.current, el]);
+    select(el.id);
   };
 
-  const labelCenter = () => {
-    const s = LABEL_SIZES[labelSizeId];
-    return { x: s.width / 2, y: s.height / 2 };
-  };
-
-  const addText = () => {
-    const spec = LABEL_SIZES[labelSizeId];
-    const { y } = labelCenter();
+  const addText = (preset: "body" | "title" | "date") => {
+    const fontSize = preset === "title" ? 96 : preset === "date" ? 72 : 56;
     const el: TextElement = {
       id: uuid(),
       type: "text",
       x: 40,
-      y: y - 28,
-      text: "Nieuwe tekst",
-      fontSize: 56,
-      fontStyle: "normal",
+      y: center.y - fontSize / 2,
+      text:
+        preset === "date"
+          ? new Date().toLocaleDateString("nl-NL")
+          : preset === "title"
+            ? "Titel"
+            : "Nieuwe tekst",
+      fontSize,
+      fontStyle: preset === "body" ? "normal" : "bold",
       fill: "#000000",
       width: spec.width - 80,
       align: "center",
     };
-    pushHistory([...elements, el]);
-    setSelectedId(el.id);
-    window.setTimeout(() => textContentRef.current?.focus(), 0);
+    addElement(el);
+    focusText();
   };
 
-  const addRect = () => {
-    const { x, y } = labelCenter();
-    const width = 240;
-    const height = 140;
-    pushHistory([
-      ...elements,
-      {
-        id: uuid(),
-        type: "rect",
-        x: x - width / 2,
-        y: y - height / 2,
-        width,
-        height,
-        stroke: "#000000",
-        strokeWidth: 3,
-      },
-    ]);
+  const addRect = (variant: "frame" | "box") => {
+    const width = variant === "frame" ? spec.width - 40 : 300;
+    const height = variant === "frame" ? spec.height - 40 : 160;
+    addElement({
+      id: uuid(),
+      type: "rect",
+      x: center.x - width / 2,
+      y: center.y - height / 2,
+      width,
+      height,
+      stroke: "#000000",
+      strokeWidth: variant === "frame" ? 6 : 4,
+      cornerRadius: variant === "frame" ? 24 : 0,
+    });
   };
 
-  const addLine = () => {
-    const spec = LABEL_SIZES[labelSizeId];
-    const { y } = labelCenter();
-    pushHistory([
-      ...elements,
-      {
-        id: uuid(),
-        type: "line",
-        x: 0,
-        y: 0,
-        points: [40, y, spec.width - 40, y],
-        stroke: "#000000",
-        strokeWidth: 3,
-      },
-    ]);
+  const addLine = (dashed = false) => {
+    addElement({
+      id: uuid(),
+      type: "line",
+      x: 0,
+      y: 0,
+      points: [40, center.y, spec.width - 40, center.y],
+      stroke: "#000000",
+      strokeWidth: 4,
+      dashed,
+    });
   };
 
-  const downloadIconPack = async (packId: string) => {
-    setIconBusy(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/icons", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ packId }),
-      });
-      const data = (await res.json()) as {
-        ok?: boolean;
-        error?: string;
-        icons?: import("@/lib/icons").IconDef[];
-      };
-      if (!res.ok || !data.ok || !data.icons?.length) {
-        throw new Error(data.error ?? "Download mislukt");
-      }
-      registerExtraIcons(data.icons);
-      await saveIconPack({ id: packId, icons: data.icons, updatedAt: Date.now() });
-      setDownloadedPacks((prev) => [...new Set([...prev, packId])]);
-      setIconPackTick((n) => n + 1);
-      setStatus(`${data.icons.length} icons geladen`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Download mislukt");
-    } finally {
-      setIconBusy(false);
-    }
+  const addIcon = (icon: IconDef, at?: { x: number; y: number }) => {
+    const pos = at ?? center;
+    addElement({
+      id: uuid(),
+      type: "icon",
+      x: pos.x - ICON_SIZE / 2,
+      y: pos.y - ICON_SIZE / 2,
+      iconId: icon.id,
+      src: icon.src,
+      width: ICON_SIZE,
+      height: ICON_SIZE,
+    });
   };
 
-  const removeIconPack = async (packId: string) => {
-    unregisterPackIcons(packId);
-    await deleteIconPack(packId);
-    setDownloadedPacks((prev) => prev.filter((id) => id !== packId));
-    setIconPackTick((n) => n + 1);
-    if (iconPackId === packId) setIconPackId("builtin");
-    setStatus("Set verwijderd van dit apparaat");
+  /* ---------- acties op selectie / label ---------- */
+
+  const applyTemplate = (templateElements: EditorElement[], scale: number, name: string) => {
+    const factor = scale / 100;
+    const scaled = scaleElements(structuredClone(templateElements), factor, center.x, center.y);
+    commit(reidElements(scaled));
+    select(null);
+    notify("success", `Sjabloon “${name}” geladen`, { label: "Ongedaan maken", run: () => undo() });
   };
 
-  const selectIconPack = (packId: string) => {
-    setIconPackId(packId);
-    setIconQuery("");
-    if (packId === "builtin") {
-      setIconFilter("medisch");
-      return;
-    }
-    if (downloadedPacks.includes(packId)) {
-      const icons = getExtraIcons(packId);
-      const cats = new Set(icons.map((icon) => icon.category));
-      setIconFilter(cats.has("medisch") ? "medisch" : "all");
-    }
-  };
-
-  const addIcon = (iconId: string) => {
-    const { x, y } = labelCenter();
-    const id = uuid();
-    pushHistory([
-      ...elements,
-      {
-        id,
-        type: "icon",
-        x: x - ICON_SIZE / 2,
-        y: y - ICON_SIZE / 2,
-        iconId,
-        width: ICON_SIZE,
-        height: ICON_SIZE,
-      },
-    ]);
-    setSelectedId(id);
-  };
-
-  const applyTemplate = (templateElements: EditorElement[]) => {
-    const { x, y } = labelCenter();
-    const factor = templateScale / 100;
-    let scaled =
-      factor === 1
-        ? cloneElements(templateElements)
-        : scaleElements(cloneElements(templateElements), factor, x, y);
-    scaled = reidElements(scaled);
-    pushHistory(scaled);
-    setSelectedId(null);
-  };
-
-  const scaleAllElements = (factor: number) => {
+  const scaleAll = (factor: number) => {
     if (elements.length === 0) return;
-    const { x, y } = labelCenter();
-    pushHistory(scaleElements(elements, factor, x, y));
-  };
-
-  const scaleSelected = (factor: number) => {
-    if (!selectedId) return;
-    const { x, y } = labelCenter();
-    pushHistory(
-      elements.map((el) => {
-        if (el.id !== selectedId) return el;
-        return scaleElements([el], factor, x, y)[0]!;
-      }),
-    );
+    commit(scaleElements(elements, factor, center.x, center.y));
   };
 
   const deleteSelected = useCallback(() => {
     if (!selectedId) return;
-    pushHistory(elements.filter((e) => e.id !== selectedId));
-    setSelectedId(null);
-  }, [elements, pushHistory, selectedId]);
-
-  const clearCanvas = useCallback(() => {
-    if (elements.length === 0) return;
-    if (!window.confirm("Alles van dit label wissen? Je kunt dit met Ongedaan terugdraaien.")) {
-      return;
-    }
-    pushHistory([]);
-    setSelectedId(null);
-    setStatus("Label gewist");
-  }, [elements.length, pushHistory]);
+    commit(elementsRef.current.filter((e) => e.id !== selectedId));
+    select(null);
+  }, [commit, select, selectedId]);
 
   const duplicateSelected = useCallback(() => {
-    if (!selected) return;
-    const copy = structuredClone(selected);
+    const source = elementsRef.current.find((e) => e.id === selectedId);
+    if (!source) return;
+    const copy = structuredClone(source);
     copy.id = uuid();
-    copy.x += 24;
-    copy.y += 24;
-    pushHistory([...elements, copy]);
-    setSelectedId(copy.id);
-  }, [elements, pushHistory, selected]);
-
-  const alignSelectedText = (align: TextElement["align"]) => {
-    if (!selected || selected.type !== "text") return;
-    updateElement(selected.id, { align });
-  };
-
-  const apiHeaders = (): HeadersInit => {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    const apiKey = settings.apiKey?.trim() ?? "";
-    if (apiKey) {
-      headers["X-API-Key"] = apiKey;
+    if (copy.type === "line") {
+      copy.points = copy.points.map((p, i) => p + (i % 2 === 0 ? 24 : 24));
+    } else {
+      copy.x += 24;
+      copy.y += 24;
     }
-    return headers;
-  };
+    commit([...elementsRef.current, copy]);
+    select(copy.id);
+  }, [commit, select, selectedId]);
 
-  const checkStatus = async () => {
-    setError(null);
-    setStatus("Printerstatus ophalen…");
-    try {
-      const res = await fetch("/api/status", {
-        headers: apiHeaders(),
-        signal: AbortSignal.timeout(15000),
-      });
-      const data = (await res.json()) as {
-        ok: boolean;
-        error?: string;
-        message?: string;
-      };
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error ?? data.message ?? "Status mislukt");
+  const nudgeSelected = useCallback(
+    (dx: number, dy: number) => {
+      const el = elementsRef.current.find((e) => e.id === selectedId);
+      if (!el) return;
+      if (el.type === "line") {
+        patchCommit(el.id, { points: el.points.map((p, i) => p + (i % 2 === 0 ? dx : dy)) });
+      } else {
+        patchCommit(el.id, { x: el.x + dx, y: el.y + dy });
       }
-      setStatus(data.message ?? "Printer bereikbaar");
-    } catch (e) {
-      setStatus(null);
-      setError(e instanceof Error ? e.message : "Status mislukt");
-    }
+    },
+    [patchCommit, selectedId],
+  );
+
+  const reorderSelected = (direction: "front" | "back") => {
+    const el = elementsRef.current.find((e) => e.id === selectedId);
+    if (!el) return;
+    const rest = elementsRef.current.filter((e) => e.id !== el.id);
+    commit(direction === "front" ? [...rest, el] : [el, ...rest]);
   };
+
+  const centerSelected = (axis: "h" | "v") => {
+    if (!selected) return;
+    if (selected.type === "line") {
+      const xs = selected.points.filter((_, i) => i % 2 === 0);
+      const ys = selected.points.filter((_, i) => i % 2 === 1);
+      const dx = axis === "h" ? center.x - (Math.min(...xs) + Math.max(...xs)) / 2 : 0;
+      const dy = axis === "v" ? center.y - (Math.min(...ys) + Math.max(...ys)) / 2 : 0;
+      patchCommit(selected.id, { points: selected.points.map((p, i) => p + (i % 2 === 0 ? dx : dy)) });
+      return;
+    }
+    if (axis === "h") {
+      patchCommit(selected.id, { x: center.x - selected.width / 2 });
+      return;
+    }
+    const height =
+      selected.type === "text"
+        ? selected.fontSize * 1.1 * selected.text.split("\n").length
+        : selected.height;
+    patchCommit(selected.id, { y: center.y - height / 2 });
+  };
+
+  const clearCanvas = () => {
+    if (elements.length === 0) return;
+    commit([]);
+    select(null);
+    notify("info", "Label gewist", { label: "Ongedaan maken", run: () => undo() });
+  };
+
+
+  /* ---------- printer ---------- */
+
+  const apiHeaders = useCallback((): HeadersInit => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const apiKey = settings.apiKey.trim();
+    if (apiKey) headers["X-API-Key"] = apiKey;
+    return headers;
+  }, [settings.apiKey]);
+
+  const checkPrinter = useCallback(
+    async (announce = false) => {
+      setPrinter({ state: "checking", message: "Printer controleren…" });
+      try {
+        const res = await fetch("/api/status", {
+          headers: apiHeaders(),
+          cache: "no-store",
+          signal: AbortSignal.timeout(15000),
+        });
+        const data = (await res.json()) as { ok: boolean; error?: string; message?: string };
+        if (!res.ok || !data.ok) throw new Error(data.error ?? data.message ?? "Niet bereikbaar");
+        const message = data.message ?? "Printer bereikbaar";
+        setPrinter({ state: "online", message });
+        if (announce) notify("success", message);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Niet bereikbaar";
+        setPrinter({ state: "offline", message });
+        if (announce) notify("error", message);
+      }
+    },
+    [apiHeaders, notify],
+  );
+
+  useEffect(() => {
+    const loaded = loadSettings();
+    setSettings(loaded);
+  }, []);
+
+  useEffect(() => {
+    void checkPrinter();
+  }, [checkPrinter]);
 
   const printLabel = async () => {
+    if (elements.length === 0 || printing) return;
     setPrinting(true);
-    setError(null);
-    setStatus("Bezig met afdrukken…");
     try {
       const image = await canvasRef.current?.exportPng();
-      if (!image) {
-        throw new Error("Kon label niet exporteren");
-      }
+      if (!image) throw new Error("Kon label niet exporteren");
       const res = await fetch("/api/print", {
         method: "POST",
         headers: apiHeaders(),
         body: JSON.stringify({ labelSize: labelSizeId, image }),
         signal: AbortSignal.timeout(120_000),
       });
-      let data: { ok?: boolean; error?: string; jobId?: string; async?: boolean };
+      let data: { ok?: boolean; error?: string; jobId?: string };
       try {
         data = (await res.json()) as typeof data;
       } catch {
@@ -418,9 +413,8 @@ export default function EditorApp() {
       }
 
       const jobId = data.jobId;
-      const pollDeadline = Date.now() + 120_000;
-      while (Date.now() < pollDeadline) {
-        setStatus("Label naar printer…");
+      const deadline = Date.now() + 120_000;
+      while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 500));
         const poll = await fetch(`/api/print?jobId=${encodeURIComponent(jobId)}`, {
           headers: apiHeaders(),
@@ -432,25 +426,21 @@ export default function EditorApp() {
         } catch {
           continue;
         }
-        if (!poll.ok || !pollData.ok) {
-          throw new Error(pollData.error ?? "Printstatus onbekend");
-        }
+        if (!poll.ok || !pollData.ok) throw new Error(pollData.error ?? "Printstatus onbekend");
         if (pollData.status === "done") {
-          setStatus(`Label verzonden (${jobId.slice(0, 8)})`);
+          notify("success", "Label afgedrukt");
+          setPrinter((p) => ({ ...p, state: "online" }));
           return;
         }
-        if (pollData.status === "error") {
-          throw new Error(pollData.error ?? "Print mislukt op de server");
-        }
+        if (pollData.status === "error") throw new Error(pollData.error ?? "Print mislukt op de server");
       }
       throw new Error("Print duurde te lang — controleer de printer");
     } catch (e) {
       if (e instanceof DOMException && e.name === "TimeoutError") {
-        setError("Verbinding time-out (vaak op iOS). Probeer opnieuw of ververs de pagina.");
+        notify("error", "Verbinding time-out. Probeer opnieuw of ververs de pagina.");
       } else {
-        setError(e instanceof Error ? e.message : "Afdrukken mislukt");
+        notify("error", e instanceof Error ? e.message : "Afdrukken mislukt");
       }
-      setStatus(null);
     } finally {
       setPrinting(false);
     }
@@ -458,535 +448,439 @@ export default function EditorApp() {
 
   const persistSettings = (next: AppSettings) => {
     setSettings(next);
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+    } catch {
+      /* opslag niet beschikbaar */
+    }
   };
 
-  const saveCurrentTemplate = async () => {
-    const entry: SavedTemplate = {
-      id: uuid(),
-      name: saveName.trim() || "Sjabloon",
-      document: { labelSizeId, elements: cloneElements(elements) },
-      updatedAt: Date.now(),
+  /* ---------- zoom passend maken ---------- */
+
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.clientWidth - CANVAS_PADDING * 2 - 32;
+      const h = el.clientHeight - CANVAS_PADDING * 2 - 112;
+      const fit = Math.min(w / spec.width, h / spec.height) * 100;
+      setFitZoom(Math.max(15, Math.min(150, Math.floor(fit))));
     };
-    await saveTemplate(entry);
-    setSavedTemplates(await listSavedTemplates());
-    setStatus(`Sjabloon opgeslagen: ${entry.name}`);
+    measure();
+    const ro = new ResizeObserver(() => requestAnimationFrame(measure));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [spec.width, spec.height, isCompact]);
+
+  const stepZoom = (dir: 1 | -1) => {
+    const next = Math.round((zoom + dir * 10) / 10) * 10;
+    setZoomMode(Math.max(15, Math.min(200, next)));
   };
+
+  /* ---------- toetsenbord ---------- */
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e.target)) return;
       const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.key.toLowerCase() === "z") {
+      const key = e.key.toLowerCase();
+      if (mod && key === "z") {
         e.preventDefault();
         if (e.shiftKey) redo();
         else undo();
-        return;
-      }
-      if (mod && e.key.toLowerCase() === "y") {
+      } else if (mod && key === "y") {
         e.preventDefault();
         redo();
-        return;
-      }
-      if (mod && e.key.toLowerCase() === "d") {
+      } else if (mod && key === "d") {
         e.preventDefault();
         duplicateSelected();
-        return;
-      }
-      if (e.key === "Delete" || e.key === "Backspace") {
+      } else if (mod && key === "p") {
+        e.preventDefault();
+        void printLabelRef.current();
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        if (!selectedId) return;
         e.preventDefault();
         deleteSelected();
+      } else if (e.key === "Escape") {
+        select(null);
+      } else if (e.key.startsWith("Arrow") && selectedId) {
+        e.preventDefault();
+        const step = e.shiftKey ? 22 : 2;
+        const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+        const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+        nudgeSelected(dx, dy);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [deleteSelected, duplicateSelected, redo, undo]);
+  }, [deleteSelected, duplicateSelected, nudgeSelected, redo, select, selectedId, undo]);
 
-  const spec = LABEL_SIZES[labelSizeId];
-  if (!spec) {
-    return (
-      <div className="app-shell" style={{ padding: "2rem" }}>
-        <p>Onbekend labelformaat: {labelSizeId}</p>
-      </div>
-    );
-  }
+  const printLabelRef = useRef(printLabel);
+  printLabelRef.current = printLabel;
+
+  /* ---------- weergave ---------- */
+
+  const printerLabel =
+    printer.state === "online" ? "Printer klaar" : printer.state === "offline" ? "Printer offline" : "Controleren…";
+
+  const sidePanel = (
+    <>
+      {activePanel === "add" && (
+        <div className="panel-body">
+          <section className="panel-group">
+            <h3>Tekst</h3>
+            <div className="tile-grid">
+              <button type="button" className="tile" onClick={() => addText("title")}>
+                <span className="tile-art tile-art-title">Aa</span>
+                <span>Titel</span>
+              </button>
+              <button type="button" className="tile" onClick={() => addText("body")}>
+                <span className="tile-art tile-art-body">Aa</span>
+                <span>Tekst</span>
+              </button>
+              <button type="button" className="tile" onClick={() => addText("date")}>
+                <Icon name="calendar" size={26} strokeWidth={1.6} />
+                <span>Datum</span>
+              </button>
+            </div>
+          </section>
+          <section className="panel-group">
+            <h3>Vormen</h3>
+            <div className="tile-grid">
+              <button type="button" className="tile" onClick={() => addRect("box")}>
+                <span className="tile-shape tile-shape-box" />
+                <span>Kader</span>
+              </button>
+              <button type="button" className="tile" onClick={() => addRect("frame")}>
+                <span className="tile-shape tile-shape-frame" />
+                <span>Rand</span>
+              </button>
+              <button type="button" className="tile" onClick={() => addLine(false)}>
+                <span className="tile-shape tile-shape-line" />
+                <span>Lijn</span>
+              </button>
+              <button type="button" className="tile" onClick={() => addLine(true)}>
+                <span className="tile-shape tile-shape-dashed" />
+                <span>Stippellijn</span>
+              </button>
+            </div>
+          </section>
+          <section className="panel-group">
+            <h3>Meer</h3>
+            <div className="list-links">
+              <button type="button" className="list-link" onClick={() => setPanel("icons")}>
+                <Icon name="smile" size={18} />
+                <span>
+                  <strong>Icons</strong>
+                  <small>Medisch, waarschuwing, IT en meer</small>
+                </span>
+              </button>
+              <button type="button" className="list-link" onClick={() => setPanel("templates")}>
+                <Icon name="layout" size={18} />
+                <span>
+                  <strong>Sjablonen</strong>
+                  <small>Begin met een kant-en-klaar label</small>
+                </span>
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {activePanel === "icons" && <IconsPanel onAdd={(icon) => addIcon(icon)} notify={notify} />}
+      {activePanel === "templates" && (
+        <TemplatesPanel spec={spec} elements={elements} onApply={applyTemplate} notify={notify} />
+      )}
+    </>
+  );
+
+  const inspector = (
+    <Inspector
+      spec={spec}
+      elements={elements}
+      selected={selected}
+      textRef={textContentRef}
+      onSelect={select}
+      onCommit={patchCommit}
+      onLive={patchLive}
+      onBeginEdit={snapshot}
+      onDuplicate={duplicateSelected}
+      onDelete={deleteSelected}
+      onReorder={reorderSelected}
+      onCenter={centerSelected}
+    />
+  );
+
+  const visiblePanels = PANELS.filter((p) => isCompact || p.id !== "inspect");
 
   return (
-    <div className="app-shell">
-      <header className="top-bar">
+    <div className="app">
+      <header className="topbar">
         <div className="brand">
-          <span className="brand-mark">BD</span>
-          <div>
-            <h1>BrotherDruk</h1>
-            <p className="brand-meta">{spec.name} · DK-22205</p>
+          <img src="/favicon.svg" alt="" className="brand-logo" />
+          <div className="brand-text">
+            <strong>BrotherDruk</strong>
+            <span>Label-editor</span>
           </div>
         </div>
-        <div className="top-actions">
-          <button type="button" className="btn" onClick={undo} disabled={!undoStack.length}>
-            Ongedaan
-          </button>
-          <button type="button" className="btn" onClick={redo} disabled={!redoStack.length}>
-            Opnieuw
-          </button>
+
+        <div className="topbar-group">
           <button
             type="button"
-            className="btn btn-danger"
-            disabled={elements.length === 0}
-            onClick={clearCanvas}
+            className="btn btn-icon btn-ghost"
+            onClick={undo}
+            disabled={!undoRef.current.length}
+            title="Ongedaan maken (Ctrl+Z)"
+            aria-label="Ongedaan maken"
           >
-            Label wissen
-          </button>
-          <button type="button" className="btn btn-ghost" onClick={() => void checkStatus()}>
-            Printer
+            <Icon name="undo" />
           </button>
           <button
             type="button"
-            className="btn btn-primary"
-            disabled={printing}
+            className="btn btn-icon btn-ghost"
+            onClick={redo}
+            disabled={!redoRef.current.length}
+            title="Opnieuw (Ctrl+Y)"
+            aria-label="Opnieuw"
+          >
+            <Icon name="redo" />
+          </button>
+        </div>
+
+        <div className="topbar-actions">
+          <button
+            type="button"
+            className={`printer-pill is-${printer.state}`}
+            onClick={() => void checkPrinter(true)}
+            title={`${printer.message} — klik om opnieuw te controleren`}
+          >
+            <span className="dot" />
+            <span className="printer-pill-text">{printerLabel}</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-icon btn-ghost"
+            title="Instellingen"
+            aria-label="Instellingen"
+            onClick={() => settingsRef.current?.showModal()}
+          >
+            <Icon name="settings" />
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary btn-print"
+            disabled={printing || elements.length === 0}
+            title={elements.length === 0 ? "Voeg eerst iets toe aan het label" : "Afdrukken (Ctrl+P)"}
             onClick={() => void printLabel()}
           >
-            {printing ? "Bezig…" : "Druk af"}
+            <Icon name={printing ? "refresh" : "printer"} className={printing ? "spin" : undefined} />
+            <span>{printing ? "Afdrukken…" : "Afdrukken"}</span>
           </button>
         </div>
       </header>
 
-      {(status || error) && (
-        <div className={`status-banner${error ? " error" : ""}`}>{error ?? status}</div>
-      )}
-
-      <div className="main-area">
-        <aside className="library-panel">
-          <nav className="rail-tabs" aria-label="Bibliotheek">
-            <button
-              type="button"
-              className={`btn${library === "templates" ? " active" : ""}`}
-              onClick={() => setLibrary("templates")}
-            >
-              Sjablonen
-            </button>
-            <button
-              type="button"
-              className={`btn${library === "icons" ? " active" : ""}`}
-              onClick={() => setLibrary("icons")}
-            >
-              Icons
-            </button>
-            <button
-              type="button"
-              className={`btn${library === "shapes" ? " active" : ""}`}
-              onClick={() => setLibrary("shapes")}
-            >
-              Vormen
-            </button>
-          </nav>
-
-          {library === "templates" && (
-            <div className="panel-section">
-              <h2>Startpunt</h2>
-              <div className="field">
-                <label htmlFor="template-scale">Grootte bij laden: {templateScale}%</label>
-                <input
-                  id="template-scale"
-                  type="range"
-                  min={80}
-                  max={200}
-                  step={5}
-                  value={templateScale}
-                  onChange={(e) => setTemplateScale(parseInt(e.target.value, 10))}
-                />
-              </div>
-              <div className="template-list">
-                {BUILTIN_TEMPLATES.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    className="template-card"
-                    onClick={() => applyTemplate(t.elements)}
-                  >
-                    <strong>{t.name}</strong>
-                    <span>{t.description}</span>
-                  </button>
-                ))}
-              </div>
-              <h2 style={{ marginTop: "1.15rem" }}>Opgeslagen</h2>
-              <div className="field">
-                <label htmlFor="save-name">Naam</label>
-                <input
-                  id="save-name"
-                  value={saveName}
-                  onChange={(e) => setSaveName(e.target.value)}
-                />
-              </div>
-              <button type="button" className="btn btn-primary" onClick={() => void saveCurrentTemplate()}>
-                Huidig label opslaan
+      <div className="workspace">
+        <aside className="sidebar">
+          <nav className="side-tabs" aria-label="Panelen">
+            {visiblePanels.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={activePanel === p.id ? "active" : undefined}
+                aria-current={activePanel === p.id ? "page" : undefined}
+                onClick={() => setPanel(p.id)}
+              >
+                <Icon name={p.icon} size={20} />
+                <span>{p.label}</span>
               </button>
-              <div className="template-list" style={{ marginTop: "0.75rem" }}>
-                {savedTemplates.map((t) => (
-                  <div key={t.id} className="saved-row">
-                    <button
-                      type="button"
-                      className="template-card"
-                      style={{ flex: 1 }}
-                      onClick={() => applyTemplate(t.document.elements)}
-                    >
-                      <strong>{t.name}</strong>
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-danger"
-                      aria-label="Verwijderen"
-                      onClick={() =>
-                        void deleteTemplate(t.id).then(async () =>
-                          setSavedTemplates(await listSavedTemplates()),
-                        )
-                      }
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {library === "icons" && (
-            <div className="panel-section">
-              <h2>Icons</h2>
-              <div className="field">
-                <label htmlFor="icon-pack">Set</label>
-                <select
-                  id="icon-pack"
-                  value={iconPackId}
-                  onChange={(e) => selectIconPack(e.target.value)}
-                >
-                  {ICON_PACKS.map((pack) => {
-                    const ready = pack.builtin || downloadedPacks.includes(pack.id);
-                    return (
-                      <option key={pack.id} value={pack.id}>
-                        {pack.name}
-                        {ready ? "" : " — download"}
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
-              <p className="hint" style={{ marginTop: "-0.35rem" }}>
-                {getIconPack(iconPackId)?.description}
-                {getIconPack(iconPackId)?.builtin
-                  ? ""
-                  : ` · ${getIconPack(iconPackId)?.license}`}
-              </p>
-              {!getIconPack(iconPackId)?.builtin && (
-                <div className="btn-row" style={{ marginBottom: "0.75rem" }}>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={iconBusy}
-                    onClick={() => void downloadIconPack(iconPackId)}
-                  >
-                    {iconBusy
-                      ? "Downloaden…"
-                      : downloadedPacks.includes(iconPackId)
-                        ? "Opnieuw downloaden"
-                        : "Set downloaden"}
-                  </button>
-                  {downloadedPacks.includes(iconPackId) && (
-                    <button
-                      type="button"
-                      className="btn btn-danger"
-                      disabled={iconBusy}
-                      onClick={() => void removeIconPack(iconPackId)}
-                    >
-                      Verwijder set
-                    </button>
-                  )}
-                </div>
-              )}
-              {!iconPackReady && !getIconPack(iconPackId)?.builtin && (
-                <p className="hint">
-                  {iconBusy
-                    ? "Icons worden opgehaald…"
-                    : `Deze set staat nog niet op dit apparaat. Download om ${getIconPack(iconPackId)?.icons.length ?? 0} icons te gebruiken (eenmalig, daarna offline).`}
-                </p>
-              )}
-              {iconPackReady && (
-                <>
-                  <div className="field">
-                    <label htmlFor="icon-search">Zoeken</label>
-                    <input
-                      id="icon-search"
-                      value={iconQuery}
-                      onChange={(e) => setIconQuery(e.target.value)}
-                      placeholder="bijv. infuus, hart, koel"
-                    />
-                  </div>
-                  {availableIconFilters.length > 1 && (
-                    <div className="chip-row">
-                      {availableIconFilters.map((id) => (
-                        <button
-                          key={id}
-                          type="button"
-                          className={`chip${iconFilter === id ? " active" : ""}`}
-                          onClick={() => setIconFilter(id)}
-                        >
-                          {ICON_CATEGORY_LABELS[id]}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <p className="hint" style={{ marginTop: 0 }}>
-                    Klik om in het midden te plaatsen. {filteredIcons.length} icons
-                    {filteredIcons.length !== iconsForPack.length ? ` (van ${iconsForPack.length})` : ""}.
-                  </p>
-                  <div className="icon-grid">
-                    {filteredIcons.length === 0 ? (
-                      <p className="hint">Geen icons voor deze zoekopdracht of categorie.</p>
-                    ) : (
-                      filteredIcons.map((icon) => (
-                        <button
-                          key={icon.id}
-                          type="button"
-                          className="icon-btn"
-                          draggable
-                          onDragStart={(e) => {
-                            e.dataTransfer.setData("text/plain", icon.id);
-                            e.dataTransfer.effectAllowed = "copy";
-                          }}
-                          onClick={() => addIcon(icon.id)}
-                        >
-                          <img src={icon.src} alt="" />
-                          <span>{icon.label}</span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {library === "shapes" && (
-            <div className="panel-section">
-              <h2>Toevoegen</h2>
-              <div className="shape-list">
-                <button type="button" className="template-card" onClick={addText}>
-                  <strong>Tekst</strong>
-                  <span>Titel, dosis of toelichting</span>
-                </button>
-                <button type="button" className="template-card" onClick={addRect}>
-                  <strong>Rechthoek</strong>
-                  <span>Kader of vak</span>
-                </button>
-                <button type="button" className="template-card" onClick={addLine}>
-                  <strong>Lijn</strong>
-                  <span>Scheiding over de breedte</span>
-                </button>
-              </div>
-            </div>
-          )}
+            ))}
+          </nav>
+          <div className="side-panel">{activePanel === "inspect" ? inspector : sidePanel}</div>
         </aside>
 
-        <section
-          className="canvas-panel"
+        <main
+          className="stage"
+          ref={viewportRef}
           onDragOver={(e) => {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = "copy";
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            const iconId = e.dataTransfer.getData("text/plain");
-            if (getAllIcons().some((icon) => icon.id === iconId)) {
-              addIcon(iconId);
+            if (e.dataTransfer.types.includes("application/x-brotherdruk-icon")) {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "copy";
             }
           }}
+          onDrop={(e) => {
+            const iconId = e.dataTransfer.getData("application/x-brotherdruk-icon");
+            const icon = getAllIcons().find((i) => i.id === iconId);
+            if (!icon) return;
+            e.preventDefault();
+            const rect = canvasWrapRef.current?.getBoundingClientRect();
+            const scale = zoom / 100;
+            const at = rect
+              ? {
+                  x: (e.clientX - rect.left - CANVAS_PADDING) / scale,
+                  y: (e.clientY - rect.top - CANVAS_PADDING) / scale,
+                }
+              : undefined;
+            addIcon(icon, at);
+          }}
+          onPointerDown={(e) => {
+            if (e.target === e.currentTarget) select(null);
+          }}
         >
-          <LabelCanvas
-            ref={canvasRef}
-            labelSizeId={labelSizeId}
-            elements={elements}
-            selectedId={selectedId}
-            zoom={zoom}
-            onSelect={setSelectedId}
-            onChangeElement={updateElement}
-            onRequestTextEdit={requestTextEdit}
-          />
-          <div className="canvas-tools">
-            <label>
-              Zoom
-              <input
-                type="range"
-                min={30}
-                max={120}
-                value={zoom}
-                onChange={(e) => setZoom(parseInt(e.target.value, 10))}
-              />
-              {zoom}%
-            </label>
-            <button
-              type="button"
-              className="btn"
-              disabled={elements.length === 0}
-              onClick={() => scaleAllElements(1.1)}
-            >
-              Alles +
+          <div className="stage-caption">
+            <strong>{spec.name}</strong>
+            <span>DK-22205 · 62 mm doorlopend</span>
+          </div>
+          <div className="stage-canvas" ref={canvasWrapRef}>
+            <LabelCanvas
+              ref={canvasRef}
+              labelSizeId={labelSizeId}
+              elements={elements}
+              selectedId={selectedId}
+              zoom={zoom}
+              onSelect={select}
+              onChangeElement={patchCommit}
+              onRequestTextEdit={(id) => {
+                select(id);
+                focusText();
+              }}
+            />
+            {elements.length === 0 && (
+              <div className="stage-empty">
+                <p>Leeg label</p>
+                <span>Kies links iets om toe te voegen, of start met een sjabloon.</span>
+              </div>
+            )}
+          </div>
+
+          <div className="stage-toolbar" role="toolbar" aria-label="Weergave">
+            <button type="button" className="btn btn-icon btn-ghost btn-sm" onClick={() => stepZoom(-1)} aria-label="Uitzoomen" title="Uitzoomen">
+              <Icon name="zoomOut" size={16} />
             </button>
             <button
               type="button"
-              className="btn"
+              className={`btn btn-ghost btn-sm zoom-value${zoomMode === "fit" ? " active" : ""}`}
+              onClick={() => setZoomMode("fit")}
+              title="Passend maken"
+            >
+              {zoom}%
+            </button>
+            <button type="button" className="btn btn-icon btn-ghost btn-sm" onClick={() => stepZoom(1)} aria-label="Inzoomen" title="Inzoomen">
+              <Icon name="zoomIn" size={16} />
+            </button>
+            <span className="toolbar-sep" />
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
               disabled={elements.length === 0}
-              onClick={() => scaleAllElements(0.9)}
+              onClick={() => scaleAll(0.9)}
+              title="Alles 10% kleiner"
             >
               Alles −
             </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={elements.length === 0}
+              onClick={() => scaleAll(1.1)}
+              title="Alles 10% groter"
+            >
+              Alles +
+            </button>
+            <span className="toolbar-sep" />
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm btn-danger-ghost"
+              disabled={elements.length === 0}
+              onClick={clearCanvas}
+              title="Label leegmaken"
+            >
+              <Icon name="eraser" size={16} />
+              <span className="hide-sm">Wissen</span>
+            </button>
           </div>
-        </section>
+        </main>
 
-        <aside className="inspector-panel">
-          <div className="panel-section">
-            <h2>Eigenschappen</h2>
-            {!selected && (
-              <p className="hint">
-                Selecteer een element op het label. Dubbelklik op tekst om te bewerken. Delete verwijdert,
-                Ctrl+D dupliceert.
-              </p>
+        {!isCompact && <aside className="inspector">{inspector}</aside>}
+      </div>
+
+      <div className="toasts" role="status" aria-live="polite">
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast toast-${t.kind}`}>
+            <Icon name={t.kind === "error" ? "alert" : t.kind === "success" ? "check" : "info"} size={18} />
+            <span className="toast-msg">{t.message}</span>
+            {t.action && (
+              <button
+                type="button"
+                className="toast-action"
+                onClick={() => {
+                  t.action?.run();
+                  dismissToast(t.id);
+                }}
+              >
+                {t.action.label}
+              </button>
             )}
-            {selected?.type === "text" && (
-              <>
-                <div className="field">
-                  <label htmlFor="text-content">Tekst</label>
-                  <textarea
-                    ref={textContentRef}
-                    id="text-content"
-                    rows={3}
-                    value={selected.text}
-                    onChange={(e) => updateElement(selected.id, { text: e.target.value })}
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="text-size">Lettergrootte ({selected.fontSize})</label>
-                  <div className="btn-row" style={{ alignItems: "center" }}>
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() =>
-                        updateElement(selected.id, {
-                          fontSize: Math.max(8, selected.fontSize - 8),
-                        })
-                      }
-                    >
-                      A−
-                    </button>
-                    <input
-                      id="text-size"
-                      type="range"
-                      min={16}
-                      max={200}
-                      step={2}
-                      value={selected.fontSize}
-                      style={{ flex: 1 }}
-                      onChange={(e) =>
-                        updateElement(selected.id, {
-                          fontSize: parseInt(e.target.value, 10) || 16,
-                        })
-                      }
-                    />
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() =>
-                        updateElement(selected.id, {
-                          fontSize: Math.min(200, selected.fontSize + 8),
-                        })
-                      }
-                    >
-                      A+
-                    </button>
-                  </div>
-                </div>
-                <div className="field">
-                  <label>Stijl</label>
-                  <div className="btn-row">
-                    <button
-                      type="button"
-                      className={`btn${selected.fontStyle === "normal" ? " active" : ""}`}
-                      onClick={() => updateElement(selected.id, { fontStyle: "normal" })}
-                    >
-                      Normaal
-                    </button>
-                    <button
-                      type="button"
-                      className={`btn${selected.fontStyle === "bold" ? " active" : ""}`}
-                      onClick={() => updateElement(selected.id, { fontStyle: "bold" })}
-                    >
-                      Vet
-                    </button>
-                  </div>
-                </div>
-                <div className="field">
-                  <label>Uitlijning</label>
-                  <div className="btn-row">
-                    <button
-                      type="button"
-                      className={`btn${selected.align === "left" ? " active" : ""}`}
-                      onClick={() => alignSelectedText("left")}
-                    >
-                      Links
-                    </button>
-                    <button
-                      type="button"
-                      className={`btn${selected.align === "center" ? " active" : ""}`}
-                      onClick={() => alignSelectedText("center")}
-                    >
-                      Midden
-                    </button>
-                    <button
-                      type="button"
-                      className={`btn${selected.align === "right" ? " active" : ""}`}
-                      onClick={() => alignSelectedText("right")}
-                    >
-                      Rechts
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-            {selected && (
-              <div className="btn-row">
-                <button type="button" className="btn" onClick={() => scaleSelected(1.1)}>
-                  Groter
-                </button>
-                <button type="button" className="btn" onClick={() => scaleSelected(0.9)}>
-                  Kleiner
-                </button>
-                <button type="button" className="btn" onClick={duplicateSelected}>
-                  Dupliceer
-                </button>
-                <button type="button" className="btn btn-danger" onClick={deleteSelected}>
-                  Verwijder
-                </button>
+            <button type="button" className="toast-close" aria-label="Sluiten" onClick={() => dismissToast(t.id)}>
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <dialog
+        ref={settingsRef}
+        className="dialog"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) e.currentTarget.close();
+        }}
+      >
+        <div className="dialog-body">
+          <div className="dialog-head">
+            <h2>Instellingen</h2>
+            <button
+              type="button"
+              className="btn btn-icon btn-ghost"
+              aria-label="Sluiten"
+              onClick={() => settingsRef.current?.close()}
+            >
+              <Icon name="x" />
+            </button>
+          </div>
+
+          <section className="panel-group">
+            <h3>Printer</h3>
+            <div className={`printer-card is-${printer.state}`}>
+              <span className="dot" />
+              <div>
+                <strong>{printerLabel}</strong>
+                <p>{printer.message}</p>
               </div>
-            )}
-          </div>
-
-          <details className="settings-block">
-            <summary>Instellingen</summary>
-            <div className="field" style={{ marginTop: "0.75rem" }}>
-              <label htmlFor="api-key">API-sleutel (optioneel)</label>
-              <input
-                id="api-key"
-                type="password"
-                value={settings.apiKey ?? ""}
-                onChange={(e) => persistSettings({ ...settings, apiKey: e.target.value })}
-                placeholder="Alleen nodig als API_KEY in Docker staat"
-              />
+              <button type="button" className="btn btn-sm" onClick={() => void checkPrinter(true)}>
+                <Icon name="refresh" size={15} className={printer.state === "checking" ? "spin" : undefined} />
+                Controleren
+              </button>
             </div>
             <p className="hint">
-              Standaard praat de app met dezelfde Next.js-server op dit apparaat. Printer:{" "}
-              {process.env.NEXT_PUBLIC_PRINTER_HINT ?? "via server PRINTER_HOST"}.
+              Brother QL-820NWB met rol DK-22205 (62 mm). Het printeradres staat op de server
+              (PRINTER_HOST).
             </p>
-          </details>
-        </aside>
-      </div>
+          </section>
+
+          <section className="panel-group">
+            <h3>Beveiliging</h3>
+            <label className="field">
+              <span className="field-label">API-sleutel (optioneel)</span>
+              <input
+                className="input"
+                type="password"
+                autoComplete="off"
+                value={settings.apiKey}
+                onChange={(e) => persistSettings({ ...settings, apiKey: e.target.value })}
+                placeholder="Alleen nodig als API_KEY op de server staat"
+              />
+            </label>
+          </section>
+        </div>
+      </dialog>
     </div>
   );
 }

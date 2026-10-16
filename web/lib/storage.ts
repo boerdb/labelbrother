@@ -6,10 +6,14 @@ const STORE = "templates";
 const PACK_STORE = "iconPacks";
 const DB_VERSION = 2;
 
+/** Verhoog wanneer de opgeslagen icon-afbeeldingen opnieuw gegenereerd moeten worden. */
+export const ICON_PACK_FORMAT = 2;
+
 export interface SavedIconPack {
   id: string;
   icons: IconDef[];
   updatedAt: number;
+  format?: number;
 }
 
 export interface SavedTemplate {

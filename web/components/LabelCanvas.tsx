@@ -27,8 +27,13 @@ interface LabelCanvasProps {
   onRequestTextEdit?: (id: string) => void;
 }
 
+/** Ruimte rond het label voor de schaduw en de resize-handles. */
+export const CANVAS_PADDING = 16;
 const MIN_BOX = 24;
 const MIN_FONT = 8;
+const SNAP_PX = 10;
+const ACCENT = "#2563eb";
+const GUIDE = "#ec4899";
 
 function bakeScale(node: Konva.Node) {
   const scaleX = node.scaleX();
@@ -47,23 +52,27 @@ function useIconImage(src: string | undefined) {
     }
     const img = new window.Image();
     img.crossOrigin = "anonymous";
-    img.src = src;
     img.onload = () => setImage(img);
+    img.src = src;
   }, [src]);
   return image;
+}
+
+interface DragHandlers {
+  onDragMove: (e: Konva.KonvaEventObject<DragEvent>) => void;
+  onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => void;
 }
 
 const IconNode = forwardRef<
   Konva.Image,
   {
     element: Extract<EditorElement, { type: "icon" }>;
-    isSelected: boolean;
     onSelect: () => void;
-    onDragEnd: (x: number, y: number) => void;
+    drag: DragHandlers;
     onTransformEnd: (patch: { x: number; y: number; width: number; height: number }) => void;
   }
->(function IconNode({ element, isSelected, onSelect, onDragEnd, onTransformEnd }, ref) {
-  const image = useIconImage(getIconSrc(element.iconId));
+>(function IconNode({ element, onSelect, drag, onTransformEnd }, ref) {
+  const image = useIconImage(element.src ?? getIconSrc(element.iconId));
   return (
     <KonvaImage
       ref={ref}
@@ -73,9 +82,10 @@ const IconNode = forwardRef<
       width={element.width}
       height={element.height}
       draggable
-      onClick={onSelect}
-      onTap={onSelect}
-      onDragEnd={(e) => onDragEnd(e.target.x(), e.target.y())}
+      onMouseDown={onSelect}
+      onTouchStart={onSelect}
+      onDragMove={drag.onDragMove}
+      onDragEnd={drag.onDragEnd}
       onTransformEnd={(e) => {
         const { scaleX, scaleY, x, y } = bakeScale(e.target);
         onTransformEnd({
@@ -85,8 +95,6 @@ const IconNode = forwardRef<
           height: Math.max(MIN_BOX, Math.round(element.height * scaleY)),
         });
       }}
-      stroke={isSelected ? "#1a5fb4" : undefined}
-      strokeWidth={isSelected ? 2 : 0}
     />
   );
 });
@@ -99,16 +107,44 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
   const stageRef = useRef<Konva.Stage>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const selectedRef = useRef<Konva.Node>(null);
+  const [guides, setGuides] = useState<{ v: boolean; h: boolean }>({ v: false, h: false });
+
+  const scale = zoom / 100;
+  const pad = CANVAS_PADDING / scale;
 
   useImperativeHandle(ref, () => ({
     async exportPng() {
       const stage = stageRef.current;
+      const tr = transformerRef.current;
       if (!stage) {
         throw new Error("Canvas niet klaar");
       }
-      transformerRef.current?.nodes([]);
-      stage.draw();
-      return stage.toDataURL({ pixelRatio: 1, mimeType: "image/png" });
+      const attached = tr?.nodes() ?? [];
+      const bg = stage.findOne<Konva.Rect>(".label-bg");
+      const view = { scale: stage.scaleX(), x: stage.x(), y: stage.y() };
+      tr?.nodes([]);
+      setGuides({ v: false, h: false });
+      // Exact het label op printresolutie (1 canvas-eenheid = 1 printerdot), los van
+      // de schermzoom, en zonder schaduw/ronde hoeken zodat elke pixel wit of zwart is.
+      bg?.cornerRadius(0).shadowEnabled(false);
+      stage.scale({ x: 1, y: 1 });
+      stage.position({ x: 0, y: 0 });
+      try {
+        return stage.toDataURL({
+          x: 0,
+          y: 0,
+          width: spec.width,
+          height: spec.height,
+          pixelRatio: 1,
+          mimeType: "image/png",
+        });
+      } finally {
+        stage.scale({ x: view.scale, y: view.scale });
+        stage.position({ x: view.x, y: view.y });
+        bg?.cornerRadius(6 / view.scale).shadowEnabled(true);
+        tr?.nodes(attached);
+        stage.batchDraw();
+      }
     },
   }));
 
@@ -129,9 +165,40 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
     tr.getLayer()?.batchDraw();
   }, [selectedId, elements, selectedElement]);
 
-  const scale = zoom / 100;
-  const keepRatio =
-    selectedElement?.type === "icon" || selectedElement?.type === "text";
+  const dragHandlers = (el: EditorElement): DragHandlers => ({
+    onDragMove: (e) => {
+      const node = e.target;
+      const layer = node.getLayer();
+      if (!layer) return;
+      const box = node.getClientRect({ relativeTo: layer, skipShadow: true });
+      const threshold = SNAP_PX / scale;
+      const dx = spec.width / 2 - (box.x + box.width / 2);
+      const dy = spec.height / 2 - (box.y + box.height / 2);
+      const v = Math.abs(dx) < threshold;
+      const h = Math.abs(dy) < threshold;
+      if (v) node.x(node.x() + dx);
+      if (h) node.y(node.y() + dy);
+      setGuides((g) => (g.v === v && g.h === h ? g : { v, h }));
+    },
+    onDragEnd: (e) => {
+      setGuides({ v: false, h: false });
+      const node = e.target;
+      if (el.type === "line") {
+        const dx = node.x();
+        const dy = node.y();
+        node.position({ x: 0, y: 0 });
+        onChangeElement(el.id, {
+          points: el.points.map((p, i) => p + (i % 2 === 0 ? dx : dy)),
+          x: 0,
+          y: 0,
+        });
+        return;
+      }
+      onChangeElement(el.id, { x: node.x(), y: node.y() });
+    },
+  });
+
+  const keepRatio = selectedElement?.type === "icon" || selectedElement?.type === "text";
   const enabledAnchors =
     selectedElement?.type === "line"
       ? ["middle-left", "middle-right"]
@@ -143,36 +210,41 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
     <div className="canvas-frame">
       <Stage
         ref={stageRef}
-        width={spec.width * scale + 24}
-        height={spec.height * scale + 24}
+        width={spec.width * scale + CANVAS_PADDING * 2}
+        height={spec.height * scale + CANVAS_PADDING * 2}
         scaleX={scale}
         scaleY={scale}
-        x={12}
-        y={12}
+        x={CANVAS_PADDING}
+        y={CANVAS_PADDING}
         onMouseDown={(e) => {
-          if (e.target === e.target.getStage()) {
+          if (e.target === e.target.getStage() || e.target.name() === "label-bg") {
             onSelect(null);
           }
         }}
         onTouchStart={(e) => {
-          if (e.target === e.target.getStage()) {
+          if (e.target === e.target.getStage() || e.target.name() === "label-bg") {
             onSelect(null);
           }
         }}
       >
         <Layer>
           <Rect
+            name="label-bg"
             x={0}
             y={0}
             width={spec.width}
             height={spec.height}
             fill="#ffffff"
-            listening={false}
+            cornerRadius={6 / scale}
+            shadowColor="#0f172a"
+            shadowOpacity={0.18}
+            shadowBlur={pad * 0.9}
+            shadowOffsetY={pad * 0.15}
           />
-          {elements
-            .filter((el) => el.type !== "text")
-            .map((el) => {
+          {elements.map((el) => {
             const isSelected = el.id === selectedId;
+            const select = () => onSelect(el.id);
+            const drag = dragHandlers(el);
             if (el.type === "rect") {
               return (
                 <Rect
@@ -185,12 +257,12 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
                   stroke={el.stroke}
                   strokeWidth={el.strokeWidth}
                   fill={el.fill ?? "transparent"}
+                  cornerRadius={el.cornerRadius ?? 0}
+                  strokeScaleEnabled={false}
                   draggable
-                  onClick={() => onSelect(el.id)}
-                  onTap={() => onSelect(el.id)}
-                  onDragEnd={(e) =>
-                    onChangeElement(el.id, { x: e.target.x(), y: e.target.y() })
-                  }
+                  onMouseDown={select}
+                  onTouchStart={select}
+                  {...drag}
                   onTransformEnd={(e) => {
                     const { scaleX, scaleY, x, y } = bakeScale(e.target);
                     onChangeElement(el.id, {
@@ -211,19 +283,13 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
                   points={el.points}
                   stroke={el.stroke}
                   strokeWidth={el.strokeWidth}
+                  hitStrokeWidth={Math.max(24, el.strokeWidth * 3)}
+                  dash={el.dashed ? [el.strokeWidth * 3, el.strokeWidth * 2] : undefined}
+                  strokeScaleEnabled={false}
                   draggable
-                  onClick={() => onSelect(el.id)}
-                  onTap={() => onSelect(el.id)}
-                  onDragEnd={(e) => {
-                    const dx = e.target.x();
-                    const dy = e.target.y();
-                    onChangeElement(el.id, {
-                      points: el.points.map((p, i) => p + (i % 2 === 0 ? dx : dy)),
-                      x: el.x + dx,
-                      y: el.y + dy,
-                    });
-                    e.target.position({ x: 0, y: 0 });
-                  }}
+                  onMouseDown={select}
+                  onTouchStart={select}
+                  {...drag}
                   onTransformEnd={(e) => {
                     const node = e.target;
                     const { scaleX, scaleY, x, y } = bakeScale(node);
@@ -239,68 +305,89 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
                 />
               );
             }
+            if (el.type === "icon") {
+              return (
+                <IconNode
+                  key={el.id}
+                  ref={isSelected ? attachSelected : undefined}
+                  element={el}
+                  onSelect={select}
+                  drag={drag}
+                  onTransformEnd={(patch) => onChangeElement(el.id, patch)}
+                />
+              );
+            }
             return (
-              <IconNode
+              <Text
                 key={el.id}
                 ref={isSelected ? attachSelected : undefined}
-                element={el}
-                isSelected={isSelected}
-                onSelect={() => onSelect(el.id)}
-                onDragEnd={(x, y) => onChangeElement(el.id, { x, y })}
-                onTransformEnd={(patch) => onChangeElement(el.id, patch)}
+                x={el.x}
+                y={el.y}
+                width={el.width}
+                text={el.text}
+                fontSize={el.fontSize}
+                fontStyle={el.fontStyle}
+                fontFamily="Arial, Helvetica, sans-serif"
+                lineHeight={1.1}
+                fill={el.fill}
+                align={el.align}
+                draggable
+                onMouseDown={select}
+                onTouchStart={select}
+                onDblClick={() => onRequestTextEdit?.(el.id)}
+                onDblTap={() => onRequestTextEdit?.(el.id)}
+                {...drag}
+                onTransformEnd={(e) => {
+                  const { scaleX, scaleY, x, y } = bakeScale(e.target);
+                  const factor = (Math.abs(scaleX) + Math.abs(scaleY)) / 2;
+                  onChangeElement(el.id, {
+                    x,
+                    y,
+                    width: Math.max(40, Math.round(el.width * scaleX)),
+                    fontSize: Math.max(MIN_FONT, Math.round(el.fontSize * factor)),
+                  });
+                }}
               />
             );
           })}
-          {elements
-            .filter((el) => el.type === "text")
-            .map((el) => {
-              const isSelected = el.id === selectedId;
-              return (
-                <Text
-                  key={el.id}
-                  ref={isSelected ? attachSelected : undefined}
-                  x={el.x}
-                  y={el.y}
-                  width={el.width}
-                  text={el.text}
-                  fontSize={el.fontSize}
-                  fontStyle={el.fontStyle}
-                  fill={el.fill}
-                  align={el.align}
-                  stroke={isSelected ? "#1a5fb4" : undefined}
-                  strokeWidth={isSelected ? 1 : 0}
-                  draggable
-                  onClick={() => onSelect(el.id)}
-                  onTap={() => onSelect(el.id)}
-                  onDblClick={() => onRequestTextEdit?.(el.id)}
-                  onDblTap={() => onRequestTextEdit?.(el.id)}
-                  onDragEnd={(e) =>
-                    onChangeElement(el.id, { x: e.target.x(), y: e.target.y() })
-                  }
-                  onTransformEnd={(e) => {
-                    const { scaleX, scaleY, x, y } = bakeScale(e.target);
-                    const factor = (Math.abs(scaleX) + Math.abs(scaleY)) / 2;
-                    onChangeElement(el.id, {
-                      x,
-                      y,
-                      width: Math.max(40, Math.round(el.width * scaleX)),
-                      fontSize: Math.max(MIN_FONT, Math.round(el.fontSize * factor)),
-                    });
-                  }}
-                />
-              );
-            })}
+          {guides.v && (
+            <Line
+              points={[spec.width / 2, 0, spec.width / 2, spec.height]}
+              stroke={GUIDE}
+              strokeWidth={1}
+              strokeScaleEnabled={false}
+              dash={[6 / scale, 4 / scale]}
+              listening={false}
+            />
+          )}
+          {guides.h && (
+            <Line
+              points={[0, spec.height / 2, spec.width, spec.height / 2]}
+              stroke={GUIDE}
+              strokeWidth={1}
+              strokeScaleEnabled={false}
+              dash={[6 / scale, 4 / scale]}
+              listening={false}
+            />
+          )}
           <Transformer
             ref={transformerRef}
             rotateEnabled={false}
             keepRatio={keepRatio}
             enabledAnchors={enabledAnchors}
             anchorSize={10}
-            borderStroke="#1a5fb4"
-            anchorStroke="#1a5fb4"
+            anchorCornerRadius={3}
+            padding={4}
+            borderStroke={ACCENT}
+            anchorStroke={ACCENT}
             anchorFill="#ffffff"
+            ignoreStroke
             boundBoxFunc={(oldBox, newBox) => {
-              if (Math.abs(newBox.width) < MIN_BOX || Math.abs(newBox.height) < MIN_BOX) {
+              const min = MIN_BOX * scale;
+              const tooNarrow = Math.abs(newBox.width) < min;
+              // Een lijn heeft geen hoogte; alleen de lengte begrenzen.
+              const tooLow = selectedElement?.type !== "line" && Math.abs(newBox.height) < min;
+              if (tooNarrow || tooLow) {
                 return oldBox;
               }
               return newBox;

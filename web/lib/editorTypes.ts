@@ -24,6 +24,7 @@ export interface RectElement extends BaseElement {
   stroke: string;
   strokeWidth: number;
   fill?: string;
+  cornerRadius?: number;
 }
 
 export interface LineElement extends BaseElement {
@@ -31,11 +32,14 @@ export interface LineElement extends BaseElement {
   points: number[];
   stroke: string;
   strokeWidth: number;
+  dashed?: boolean;
 }
 
 export interface IconElement extends BaseElement {
   type: "icon";
   iconId: string;
+  /** Kopie van de icon-afbeelding, zodat labels ook werken zonder gedownloade set. */
+  src?: string;
   width: number;
   height: number;
 }
