@@ -9,7 +9,9 @@ import paramiko
 
 HOST = os.environ.get("DEPLOY_HOST", "192.168.1.32")
 USER = os.environ.get("DEPLOY_USER", "root")
-PASSWORD = os.environ.get("DEPLOY_PASSWORD", "kerkpoort")
+# Inloggen met de SSH-sleutel, niet met een wachtwoord.
+SSH_KEY_PATH = os.path.expanduser(os.environ.get("SSH_KEY_PATH", "~/.ssh/id_ed25519_homelab"))
+SSH_KEY_PASSPHRASE = os.environ.get("SSH_KEY_PASSPHRASE") or None
 REMOTE_DIR = os.environ.get("DEPLOY_DIR", "/var/www/labelbrother")
 PORT = int(os.environ.get("DEPLOY_PORT", "3022"))
 APP_NAME = os.environ.get("DEPLOY_APP", "labelbrother")
@@ -33,7 +35,15 @@ def run(ssh: paramiko.SSHClient, cmd: str, timeout: int = 600) -> None:
 def main() -> None:
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(HOST, username=USER, password=PASSWORD, timeout=30)
+    ssh.connect(
+        HOST,
+        username=USER,
+        key_filename=SSH_KEY_PATH,
+        passphrase=SSH_KEY_PASSPHRASE,
+        allow_agent=False,
+        look_for_keys=False,
+        timeout=30,
+    )
     run(
         ssh,
         f"cd {REMOTE_DIR} && git checkout -- web/public/icons/app-192.png web/public/icons/app-512.png 2>/dev/null || true",
