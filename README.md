@@ -77,6 +77,14 @@ $env:PRINTER_PORT="9100"
 npm run dev -w web
 ```
 
+## Phomemo (Bluetooth)
+
+Naast de Brother kun je in **Instellingen → Printer** kiezen voor **Phomemo (Bluetooth)** (bijv. M110). Dit printt rechtstreeks vanuit de browser via Web Bluetooth — de server doet niets. Protocol overgenomen uit `C:\DEV\print-adres-app` (`web/lib/phomemo.ts`).
+
+- Werkt in **Chrome/Edge** (Windows, Android) via HTTPS of localhost; **niet** in Safari/iOS.
+- Eerste keer: klik op *Phomemo koppelen* en kies de printer. Daarna herverbindt Chrome automatisch (indien ondersteund).
+- Labelmaat instelbaar (standaard 80 × 43 mm bedrukbaar). Het 85 × 62 mm-ontwerp wordt passend geschaald.
+
 ## Printer (eenmalig)
 
 1. **Editor Lite uit** (fysieke knop, niet in het LCD-menu): op de QL-820NWB(c) zit een **Editor Lite-knop** met een **groen lampje**. Houd die knop ingedrukt tot het **groene lampje uit** is. Brandt het lampje, dan staat Editor Lite aan (vooral problematisch via USB).

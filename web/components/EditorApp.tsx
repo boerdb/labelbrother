@@ -12,6 +12,13 @@ import { Icon, type IconName } from "@/components/ui/Icon";
 import type { EditorElement, TextElement } from "@/lib/editorTypes";
 import { getAllIcons, type IconDef } from "@/lib/icons";
 import { LABEL_SIZES, type LabelSizeId } from "@/lib/labelSizes";
+import {
+  DEFAULT_PHOMEMO_LABEL,
+  getPhomemoPrinter,
+  isWebBluetoothAvailable,
+  renderForPhomemo,
+  type PhomemoLabel,
+} from "@/lib/phomemo";
 import { reidElements } from "@/lib/reidElements";
 import { scaleElements } from "@/lib/scaleElements";
 
@@ -22,8 +29,22 @@ const ICON_SIZE = 160;
 const HISTORY_LIMIT = 50;
 const COMPACT_QUERY = "(max-width: 1100px)";
 
+type PrinterKind = "brother" | "phomemo";
+
 interface AppSettings {
   apiKey: string;
+  printer: PrinterKind;
+  phomemoLabel: PhomemoLabel;
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  apiKey: "",
+  printer: "brother",
+  phomemoLabel: DEFAULT_PHOMEMO_LABEL,
+};
+
+function validMm(value: unknown, fallback: number): number {
+  return typeof value === "number" && value >= 10 && value <= 300 ? value : fallback;
 }
 
 type Panel = "add" | "icons" | "templates" | "inspect";
@@ -40,9 +61,16 @@ interface Toast {
 function loadSettings(): AppSettings {
   try {
     const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}") as Partial<AppSettings>;
-    return { apiKey: typeof raw.apiKey === "string" ? raw.apiKey : "" };
+    return {
+      apiKey: typeof raw.apiKey === "string" ? raw.apiKey : "",
+      printer: raw.printer === "phomemo" ? "phomemo" : "brother",
+      phomemoLabel: {
+        lengthMm: validMm(raw.phomemoLabel?.lengthMm, DEFAULT_PHOMEMO_LABEL.lengthMm),
+        widthMm: validMm(raw.phomemoLabel?.widthMm, DEFAULT_PHOMEMO_LABEL.widthMm),
+      },
+    };
   } catch {
-    return { apiKey: "" };
+    return DEFAULT_SETTINGS;
   }
 }
 
@@ -94,7 +122,13 @@ export default function EditorApp() {
     state: "checking",
     message: "Printer controleren…",
   });
-  const [settings, setSettings] = useState<AppSettings>({ apiKey: "" });
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [phomemo, setPhomemo] = useState<{ name: string | null; connected: boolean; battery: number | null }>({
+    name: null,
+    connected: false,
+    battery: null,
+  });
+  const [connecting, setConnecting] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const elementsRef = useRef(elements);
@@ -387,15 +421,56 @@ export default function EditorApp() {
   }, []);
 
   useEffect(() => {
-    void checkPrinter();
-  }, [checkPrinter]);
+    if (settings.printer === "brother") void checkPrinter();
+  }, [checkPrinter, settings.printer]);
+
+  useEffect(() => {
+    if (settings.printer !== "phomemo" || !isWebBluetoothAvailable()) return;
+    const ph = getPhomemoPrinter();
+    const sync = () =>
+      setPhomemo({ name: ph.getDeviceName(), connected: ph.isConnected(), battery: ph.getBatteryLevel() });
+    const unsub = ph.onStateChange(sync);
+    sync();
+    if (!ph.isConnected()) void ph.autoReconnect();
+    return () => {
+      unsub();
+    };
+  }, [settings.printer]);
+
+  /** Opent de Bluetooth-kiezer; alleen aanroepen vanuit een klik of toets. */
+  const connectPhomemo = async (): Promise<boolean> => {
+    if (!isWebBluetoothAvailable()) {
+      notify("error", "Bluetooth werkt alleen in Chrome of Edge (via HTTPS of localhost), niet in Safari/iOS.");
+      return false;
+    }
+    setConnecting(true);
+    try {
+      const ok = await getPhomemoPrinter().connect();
+      if (ok) notify("success", `Verbonden met ${getPhomemoPrinter().getDeviceName()}`);
+      else notify("info", "Geen printer gekozen");
+      return ok;
+    } catch (e) {
+      notify("error", e instanceof Error ? e.message : "Koppelen mislukt");
+      return false;
+    } finally {
+      setConnecting(false);
+    }
+  };
 
   const printLabel = async () => {
     if (elements.length === 0 || printing) return;
+    const ph = settings.printer === "phomemo" ? getPhomemoPrinter() : null;
+    // Nog nooit gekoppeld: kiezer direct openen, zolang de klik nog als gebruikersactie telt.
+    if (ph && !ph.getDeviceName() && !(await connectPhomemo())) return;
     setPrinting(true);
     try {
       const image = await canvasRef.current?.exportPng();
       if (!image) throw new Error("Kon label niet exporteren");
+      if (ph) {
+        await ph.print(await renderForPhomemo(image, settings.phomemoLabel));
+        notify("success", "Label afgedrukt op Phomemo");
+        return;
+      }
       const res = await fetch("/api/print", {
         method: "POST",
         headers: apiHeaders(),
@@ -520,8 +595,39 @@ export default function EditorApp() {
 
   /* ---------- weergave ---------- */
 
+  const usePhomemo = settings.printer === "phomemo";
   const printerLabel =
     printer.state === "online" ? "Printer klaar" : printer.state === "offline" ? "Printer offline" : "Controleren…";
+  const phomemoState: PrinterState = connecting ? "checking" : phomemo.connected ? "online" : "offline";
+  const phomemoLabel = connecting
+    ? "Koppelen…"
+    : phomemo.connected
+      ? `${phomemo.name ?? "Phomemo"}${phomemo.battery != null ? ` · ${phomemo.battery}%` : ""}`
+      : phomemo.name
+        ? "Phomemo niet verbonden"
+        : "Phomemo koppelen";
+  const pill = usePhomemo
+    ? {
+        state: phomemoState,
+        text: phomemoLabel,
+        title: phomemo.connected ? "Verbonden via Bluetooth" : "Klik om de Phomemo via Bluetooth te koppelen",
+        onClick: () => {
+          if (!phomemo.connected) void connectPhomemo();
+        },
+      }
+    : {
+        state: printer.state,
+        text: printerLabel,
+        title: `${printer.message} — klik om opnieuw te controleren`,
+        onClick: () => void checkPrinter(true),
+      };
+  const phomemoFit = (() => {
+    const { lengthMm, widthMm } = settings.phomemoLabel;
+    const scale = Math.min(lengthMm / 85, widthMm / 62);
+    return `${Math.round(85 * scale)} × ${Math.round(62 * scale)} mm`;
+  })();
+  const setPhomemoLabel = (patch: Partial<PhomemoLabel>) =>
+    persistSettings({ ...settings, phomemoLabel: { ...settings.phomemoLabel, ...patch } });
 
   const sidePanel = (
     <>
@@ -649,12 +755,12 @@ export default function EditorApp() {
         <div className="topbar-actions">
           <button
             type="button"
-            className={`printer-pill is-${printer.state}`}
-            onClick={() => void checkPrinter(true)}
-            title={`${printer.message} — klik om opnieuw te controleren`}
+            className={`printer-pill is-${pill.state}`}
+            onClick={pill.onClick}
+            title={pill.title}
           >
             <span className="dot" />
-            <span className="printer-pill-text">{printerLabel}</span>
+            <span className="printer-pill-text">{pill.text}</span>
           </button>
           <button
             type="button"
@@ -668,7 +774,7 @@ export default function EditorApp() {
           <button
             type="button"
             className="btn btn-primary btn-print"
-            disabled={printing || elements.length === 0}
+            disabled={printing || connecting || elements.length === 0}
             title={elements.length === 0 ? "Voeg eerst iets toe aan het label" : "Afdrukken (Ctrl+P)"}
             onClick={() => void printLabel()}
           >
@@ -727,7 +833,11 @@ export default function EditorApp() {
         >
           <div className="stage-caption">
             <strong>{spec.name}</strong>
-            <span>DK-22205 · 62 mm doorlopend</span>
+            <span>
+              {usePhomemo
+                ? `Phomemo · afdruk ${phomemoFit} op ${settings.phomemoLabel.lengthMm}×${settings.phomemoLabel.widthMm} mm`
+                : "DK-22205 · 62 mm doorlopend"}
+            </span>
           </div>
           <div className="stage-canvas" ref={canvasWrapRef}>
             <LabelCanvas
@@ -848,21 +958,113 @@ export default function EditorApp() {
 
           <section className="panel-group">
             <h3>Printer</h3>
-            <div className={`printer-card is-${printer.state}`}>
-              <span className="dot" />
-              <div>
-                <strong>{printerLabel}</strong>
-                <p>{printer.message}</p>
-              </div>
-              <button type="button" className="btn btn-sm" onClick={() => void checkPrinter(true)}>
-                <Icon name="refresh" size={15} className={printer.state === "checking" ? "spin" : undefined} />
-                Controleren
-              </button>
+            <div className="segmented" role="radiogroup" aria-label="Printer kiezen">
+              {(
+                [
+                  ["brother", "Brother (netwerk)"],
+                  ["phomemo", "Phomemo (Bluetooth)"],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="radio"
+                  aria-checked={settings.printer === id}
+                  className={settings.printer === id ? "active" : undefined}
+                  onClick={() => persistSettings({ ...settings, printer: id })}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            <p className="hint">
-              Brother QL-820NWB met rol DK-22205 (62 mm). Het printeradres staat op de server
-              (PRINTER_HOST).
-            </p>
+
+            {!usePhomemo ? (
+              <>
+                <div className={`printer-card is-${printer.state}`}>
+                  <span className="dot" />
+                  <div>
+                    <strong>{printerLabel}</strong>
+                    <p>{printer.message}</p>
+                  </div>
+                  <button type="button" className="btn btn-sm" onClick={() => void checkPrinter(true)}>
+                    <Icon name="refresh" size={15} className={printer.state === "checking" ? "spin" : undefined} />
+                    Controleren
+                  </button>
+                </div>
+                <p className="hint">
+                  Brother QL-820NWB met rol DK-22205 (62 mm). Het printeradres staat op de server
+                  (PRINTER_HOST).
+                </p>
+              </>
+            ) : (
+              <>
+                <div className={`printer-card is-${phomemoState}`}>
+                  <span className="dot" />
+                  <div>
+                    <strong>{phomemoLabel}</strong>
+                    <p>
+                      {phomemo.connected
+                        ? "Verbonden via Bluetooth"
+                        : phomemo.name
+                          ? `Laatst gebruikt: ${phomemo.name}`
+                          : "Nog geen printer gekoppeld"}
+                    </p>
+                  </div>
+                  {phomemo.name && (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => getPhomemoPrinter().forget()}
+                    >
+                      Vergeten
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={connecting}
+                    onClick={() => void connectPhomemo()}
+                  >
+                    <Icon name="refresh" size={15} className={connecting ? "spin" : undefined} />
+                    {phomemo.connected ? "Andere" : "Koppelen"}
+                  </button>
+                </div>
+                <div className="mm-grid">
+                  <label className="field">
+                    <span className="field-label">Labellengte (mm)</span>
+                    <input
+                      className="input"
+                      type="number"
+                      min={10}
+                      max={300}
+                      value={settings.phomemoLabel.lengthMm}
+                      onChange={(e) => setPhomemoLabel({ lengthMm: Number(e.target.value) || 0 })}
+                      onBlur={() =>
+                        setPhomemoLabel({ lengthMm: validMm(settings.phomemoLabel.lengthMm, DEFAULT_PHOMEMO_LABEL.lengthMm) })
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Bedrukbare breedte (mm)</span>
+                    <input
+                      className="input"
+                      type="number"
+                      min={10}
+                      max={300}
+                      value={settings.phomemoLabel.widthMm}
+                      onChange={(e) => setPhomemoLabel({ widthMm: Number(e.target.value) || 0 })}
+                      onBlur={() =>
+                        setPhomemoLabel({ widthMm: validMm(settings.phomemoLabel.widthMm, DEFAULT_PHOMEMO_LABEL.widthMm) })
+                      }
+                    />
+                  </label>
+                </div>
+                <p className="hint">
+                  Phomemo M110 via Bluetooth, rechtstreeks vanuit de browser (Chrome of Edge; niet op iPhone/Safari).
+                  Het ontwerp van 85 × 62 mm wordt passend geschaald: afdruk {phomemoFit}.
+                </p>
+              </>
+            )}
           </section>
 
           <section className="panel-group">
