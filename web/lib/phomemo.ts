@@ -9,7 +9,6 @@
 const LAST_DEVICE_ID_KEY = "phomemo.lastDeviceId";
 const CHUNK_SIZE = 192;
 const CHUNK_DELAY = 25;
-const CONNECT_TIMEOUT_MS = 15_000;
 export const PHOMEMO_DOTS_PER_MM = 8;
 
 const PROFILE_CANDIDATES = [
@@ -213,19 +212,7 @@ export class PhomemoPrinter {
   private async attach(device: BluetoothDevice): Promise<void> {
     const server = device.gatt;
     if (!server) throw new Error("GATT niet beschikbaar op dit apparaat.");
-    if (!server.connected) {
-      try {
-        await withTimeout(server.connect(), CONNECT_TIMEOUT_MS);
-      } catch (e) {
-        server.disconnect();
-        const reason = e instanceof Error ? e.message : String(e);
-        throw new Error(
-          `Verbinden met ${device.name || "printer"} mislukt (${reason}). ` +
-            "Staat de printer aan en is hij niet met je telefoon verbonden? " +
-            "Lukt het nog steeds niet: verwijder hem in Windows (Bluetooth-apparaten) en koppel opnieuw.",
-        );
-      }
-    }
+    if (!server.connected) await server.connect();
 
     if (this.device !== device) {
       device.addEventListener("gattserverdisconnected", () => {
@@ -292,13 +279,6 @@ export class PhomemoPrinter {
       this.batteryLevel = null;
     }
   }
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("time-out")), ms)),
-  ]);
 }
 
 function readStorage(key: string): string | null {
