@@ -1,14 +1,20 @@
 "use client";
 
 /**
- * Phomemo (M110 e.d.) via Web Bluetooth — zelfde protocol als C:\DEV\print-adres-app:
- * ESC/POS raster (GS v 0), 8 dots/mm, 90° gedraaid, chunks van 192 bytes met 25 ms pauze.
+ * Phomemo M110 via Web Bluetooth. BLE-profielen uit C:\DEV\print-adres-app; de framing
+ * (snelheid, dichtheid, mediatype, GS v 0-raster, footer) volgt phomemo-tools/phomymo.
+ * Zonder de footer neemt de M110 de data aan maar drukt niets af.
  * Werkt in Chrome/Edge (desktop en Android) via HTTPS of localhost. Niet in Safari/iOS.
  */
 
 const LAST_DEVICE_ID_KEY = "phomemo.lastDeviceId";
-const CHUNK_SIZE = 192;
-const CHUNK_DELAY = 25;
+const CHUNK_SIZE = 128;
+const CHUNK_DELAY = 20;
+const M110_SPEED = [0x1b, 0x4e, 0x0d, 5];
+const M110_DENSITY = [0x1b, 0x4e, 0x04, 10];
+/** 10 = labels met tussenruimte (gap). */
+const M110_MEDIA_LABEL_GAPS = [0x1f, 0x11, 10];
+const M110_FOOTER = [0x1f, 0xf0, 0x05, 0x00, 0x1f, 0xf0, 0x03, 0x00];
 export const PHOMEMO_DOTS_PER_MM = 8;
 
 const PROFILE_CANDIDATES = [
@@ -51,7 +57,7 @@ export function isWebBluetoothAvailable(): boolean {
 }
 
 /** ESC/POS bitmap uit canvas, 90° gedraaid: canvas-Y loopt over de printkop. */
-function canvasToEscPosRaster(canvas: HTMLCanvasElement): Uint8Array {
+function canvasToEscPosRaster(canvas: HTMLCanvasElement): Uint8Array<ArrayBuffer> {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("Canvas context kon niet worden gemaakt.");
 
@@ -64,7 +70,6 @@ function canvasToEscPosRaster(canvas: HTMLCanvasElement): Uint8Array {
   const bytesPerRow = Math.ceil(newWidth / 8);
 
   const header = [
-    0x1b, 0x40,
     0x1d, 0x76, 0x30, 0x00,
     bytesPerRow & 0xff, (bytesPerRow >> 8) & 0xff,
     newHeight & 0xff, (newHeight >> 8) & 0xff,
@@ -222,14 +227,25 @@ export class PhomemoPrinter {
       await this.attach(this.device);
     }
     const char = this.writeChar!;
+    const send = async (bytes: Uint8Array<ArrayBuffer>) => {
+      // Phomemo + Web Bluetooth: writeWithoutResponse is vaak vereist.
+      if (char.properties.writeWithoutResponse) await char.writeValueWithoutResponse(bytes);
+      else await char.writeValue(bytes);
+    };
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    for (const cmd of [M110_SPEED, M110_DENSITY, M110_MEDIA_LABEL_GAPS]) {
+      await send(new Uint8Array(cmd));
+      await wait(30);
+    }
     const data = canvasToEscPosRaster(canvas);
     for (let i = 0; i < data.length; i += CHUNK_SIZE) {
-      const chunk = data.slice(i, i + CHUNK_SIZE);
-      // Phomemo + Web Bluetooth: writeWithoutResponse is vaak vereist.
-      if (char.properties.writeWithoutResponse) await char.writeValueWithoutResponse(chunk);
-      else await char.writeValue(chunk);
-      await new Promise((r) => setTimeout(r, CHUNK_DELAY));
+      await send(data.slice(i, i + CHUNK_SIZE));
+      await wait(CHUNK_DELAY);
     }
+    await wait(300);
+    await send(new Uint8Array(M110_FOOTER));
+    await wait(500);
   }
 
   private async attach(device: BluetoothDevice): Promise<void> {
