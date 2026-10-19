@@ -47,6 +47,10 @@ function validMm(value: unknown, fallback: number): number {
   return typeof value === "number" && value >= 10 && value <= 300 ? value : fallback;
 }
 
+function validOffset(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(-10, Math.min(10, value)) : 0;
+}
+
 type Panel = "add" | "icons" | "templates" | "inspect";
 type PrinterState = "checking" | "online" | "offline";
 type ToastKind = "info" | "success" | "error";
@@ -67,6 +71,7 @@ function loadSettings(): AppSettings {
       phomemoLabel: {
         lengthMm: validMm(raw.phomemoLabel?.lengthMm, DEFAULT_PHOMEMO_LABEL.lengthMm),
         widthMm: validMm(raw.phomemoLabel?.widthMm, DEFAULT_PHOMEMO_LABEL.widthMm),
+        offsetMm: validOffset(raw.phomemoLabel?.offsetMm),
       },
     };
   } catch {
@@ -1069,6 +1074,18 @@ export default function EditorApp() {
                       onBlur={() =>
                         setPhomemoLabel({ widthMm: validMm(settings.phomemoLabel.widthMm, DEFAULT_PHOMEMO_LABEL.widthMm) })
                       }
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Verticaal verschuiven (mm, + = omlaag)</span>
+                    <input
+                      className="input"
+                      type="number"
+                      min={-10}
+                      max={10}
+                      step={0.5}
+                      value={settings.phomemoLabel.offsetMm}
+                      onChange={(e) => setPhomemoLabel({ offsetMm: validOffset(Number(e.target.value)) })}
                     />
                   </label>
                 </div>

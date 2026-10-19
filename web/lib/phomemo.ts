@@ -40,9 +40,13 @@ export interface PhomemoLabel {
   lengthMm: number;
   /** Bedrukbare breedte over de printkop (mm). */
   widthMm: number;
+  /** Verticale verschuiving van de afdruk (mm, positief = omlaag). */
+  offsetMm: number;
 }
 
-export const DEFAULT_PHOMEMO_LABEL: PhomemoLabel = { lengthMm: 80, widthMm: 43 };
+export const DEFAULT_PHOMEMO_LABEL: PhomemoLabel = { lengthMm: 80, widthMm: 43, offsetMm: 0 };
+/** M110-printkop: 48 mm = 384 dots. */
+export const PHOMEMO_HEAD_MM = 48;
 
 function normalizeUuid(uuid: string): string {
   const u = uuid.toLowerCase();
@@ -103,21 +107,27 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** Schaal het ontwerp passend (met behoud van verhouding) en gecentreerd op het Phomemo-label. */
+/**
+ * Schaal het ontwerp passend (met behoud van verhouding) op het Phomemo-label.
+ * Het canvas beslaat altijd de volle printkop, zodat het label er gecentreerd onder valt;
+ * een smallere rasterregel zet de printer tegen één kant van de kop.
+ */
 export async function renderForPhomemo(pngDataUrl: string, label: PhomemoLabel): Promise<HTMLCanvasElement> {
   const img = await loadImage(pngDataUrl);
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(label.lengthMm * PHOMEMO_DOTS_PER_MM);
-  canvas.height = Math.round(label.widthMm * PHOMEMO_DOTS_PER_MM);
+  canvas.height = PHOMEMO_HEAD_MM * PHOMEMO_DOTS_PER_MM;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas context kon niet worden gemaakt.");
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+  const areaHeight = Math.min(canvas.height, Math.round(label.widthMm * PHOMEMO_DOTS_PER_MM));
+  const scale = Math.min(canvas.width / img.width, areaHeight / img.height);
   const w = img.width * scale;
   const h = img.height * scale;
+  const y = (canvas.height - h) / 2 + label.offsetMm * PHOMEMO_DOTS_PER_MM;
   ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(img, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+  ctx.drawImage(img, (canvas.width - w) / 2, Math.max(0, Math.min(canvas.height - h, y)), w, h);
   return canvas;
 }
 
