@@ -612,7 +612,20 @@ export default function EditorApp() {
         text: phomemoLabel,
         title: phomemo.connected ? "Verbonden via Bluetooth" : "Klik om de Phomemo via Bluetooth te koppelen",
         onClick: () => {
-          if (!phomemo.connected) void connectPhomemo();
+          if (phomemo.connected) return;
+          if (!phomemo.name) {
+            void connectPhomemo();
+            return;
+          }
+          setConnecting(true);
+          void getPhomemoPrinter()
+            .reconnect()
+            .then((ok) =>
+              ok
+                ? notify("success", `Verbonden met ${phomemo.name}`)
+                : notify("error", "Opnieuw verbinden mislukt. Zet de printer uit en aan, of kies hem via Instellingen → Koppelen."),
+            )
+            .finally(() => setConnecting(false));
         },
       }
     : {

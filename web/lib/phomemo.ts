@@ -180,9 +180,32 @@ export class PhomemoPrinter {
     }
   }
 
+  /** Verbind opnieuw met de al gekozen printer, zonder kiezer. */
+  async reconnect(): Promise<boolean> {
+    if (!this.device) return false;
+    if (this.isConnected()) return true;
+    try {
+      await this.attach(this.device);
+      return true;
+    } catch (e) {
+      console.warn("Phomemo herverbinden mislukt:", e);
+      return false;
+    }
+  }
+
+  /** Windows verbreekt de link vaak direct na het koppelen; probeer het dan een paar keer opnieuw. */
+  private async retryAfterDisconnect(device: BluetoothDevice): Promise<void> {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await new Promise((r) => setTimeout(r, 1500 * attempt));
+      if (this.device !== device || this.isConnected()) return;
+      if (await this.reconnect()) return;
+    }
+  }
+
   forget(): void {
-    this.device?.gatt?.disconnect();
+    const device = this.device;
     this.device = null;
+    device?.gatt?.disconnect();
     this.writeChar = null;
     this.batteryLevel = null;
     try {
@@ -219,6 +242,7 @@ export class PhomemoPrinter {
         this.writeChar = null;
         this.batteryLevel = null;
         this.notify();
+        if (this.device === device) void this.retryAfterDisconnect(device);
       });
     }
     this.device = device;
