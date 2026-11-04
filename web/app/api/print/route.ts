@@ -1,4 +1,5 @@
 import { assertApiKey } from "@/lib/auth";
+import { normalizeCopies } from "@/lib/copies";
 import { getDefaultLabel } from "@/lib/printConfig";
 import { getPrintJob, startPrintJob } from "@/lib/printJobs";
 
@@ -8,6 +9,7 @@ export const dynamic = "force-dynamic";
 interface PrintBody {
   labelSize?: string;
   image?: string;
+  copies?: number;
   dither?: boolean;
 }
 
@@ -53,7 +55,7 @@ export async function POST(request: Request) {
   }
 
   const labelSize = body.labelSize ?? getDefaultLabel();
-  const jobId = startPrintJob(labelSize, body.image);
+  const jobId = startPrintJob(labelSize, body.image, normalizeCopies(body.copies));
 
   return Response.json({ ok: true, jobId, async: true });
 }

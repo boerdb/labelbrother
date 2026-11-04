@@ -95,7 +95,7 @@ Naast de Brother kun je in **Instellingen → Printer** kiezen voor **Phomemo (B
 
 | Endpoint | Methode | Body |
 |----------|---------|------|
-| `/api/print` | POST | `{ "labelSize": "85x62", "image": "<base64 png>" }` |
+| `/api/print` | POST | `{ "labelSize": "85x62", "image": "<base64 png>", "copies": 1 }` (`copies` optioneel, 1 t/m 50) |
 | `/api/status` | GET | Printerstatus |
 | `/api/media` | GET | Beschikbare labelformaten (MVP: 85×62 / DK-22205) |
 

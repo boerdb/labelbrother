@@ -390,6 +390,66 @@ button:disabled {
   padding: 0 1rem;
 }
 
+.copies-stepper {
+  flex: none;
+  display: flex;
+  height: 36px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.copies-stepper:focus-within {
+  border-color: var(--accent);
+}
+
+.copies-stepper input {
+  width: 2.4rem;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.copies-arrows {
+  display: flex;
+  flex-direction: column;
+  width: 24px;
+  border-left: 1px solid var(--border);
+}
+
+.copies-arrows button {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.copies-arrows button + button {
+  border-top: 1px solid var(--border);
+}
+
+.copies-arrows button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.copies-arrows button:disabled {
+  color: var(--border-strong);
+  cursor: default;
+}
+
 .btn-danger {
   color: var(--danger);
 }
@@ -1450,6 +1510,18 @@ input[type="range"] {
   .topbar {
     gap: 0.4rem;
     padding: 0 0.5rem 0 0.75rem;
+  }
+
+  .copies-stepper {
+    height: 44px;
+  }
+
+  .copies-stepper input {
+    width: 2rem;
+  }
+
+  .copies-arrows {
+    width: 28px;
   }
 
   .brand-text,

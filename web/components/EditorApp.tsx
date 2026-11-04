@@ -9,6 +9,7 @@ import IconsPanel from "@/components/IconsPanel";
 import Inspector from "@/components/Inspector";
 import TemplatesPanel from "@/components/TemplatesPanel";
 import { Icon, type IconName } from "@/components/ui/Icon";
+import { MAX_COPIES, normalizeCopies } from "@/lib/copies";
 import type { EditorElement, TextElement } from "@/lib/editorTypes";
 import { getAllIcons, type IconDef } from "@/lib/icons";
 import { LABEL_SIZES, type LabelSizeId } from "@/lib/labelSizes";
@@ -28,6 +29,8 @@ const SETTINGS_KEY = "brotherdruk-settings";
 const ICON_SIZE = 160;
 const HISTORY_LIMIT = 50;
 const COMPACT_QUERY = "(max-width: 1100px)";
+/** Adempauze voor de Phomemo tussen twee labels, zodat het vorige label eerst klaar is. */
+const PHOMEMO_COPY_PAUSE_MS = 1500;
 
 type PrinterKind = "brother" | "phomemo";
 
@@ -35,12 +38,14 @@ interface AppSettings {
   apiKey: string;
   printer: PrinterKind;
   phomemoLabel: PhomemoLabel;
+  copies: number;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   apiKey: "",
   printer: "brother",
   phomemoLabel: DEFAULT_PHOMEMO_LABEL,
+  copies: 1,
 };
 
 function validMm(value: unknown, fallback: number): number {
@@ -73,6 +78,7 @@ function loadSettings(): AppSettings {
         widthMm: validMm(raw.phomemoLabel?.widthMm, DEFAULT_PHOMEMO_LABEL.widthMm),
         offsetMm: validOffset(raw.phomemoLabel?.offsetMm),
       },
+      copies: normalizeCopies(raw.copies),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -462,24 +468,31 @@ export default function EditorApp() {
     }
   };
 
+  const copies = normalizeCopies(settings.copies);
+
   const printLabel = async () => {
     if (elements.length === 0 || printing) return;
     const ph = settings.printer === "phomemo" ? getPhomemoPrinter() : null;
     // Nog nooit gekoppeld: kiezer direct openen, zolang de klik nog als gebruikersactie telt.
     if (ph && !ph.getDeviceName() && !(await connectPhomemo())) return;
     setPrinting(true);
+    const doneMessage = copies === 1 ? "Label afgedrukt" : `${copies} labels afgedrukt`;
     try {
       const image = await canvasRef.current?.exportPng();
       if (!image) throw new Error("Kon label niet exporteren");
       if (ph) {
-        await ph.print(await renderForPhomemo(image, settings.phomemoLabel));
-        notify("success", "Label afgedrukt op Phomemo");
+        const canvas = await renderForPhomemo(image, settings.phomemoLabel);
+        for (let i = 0; i < copies; i++) {
+          if (i > 0) await new Promise((r) => setTimeout(r, PHOMEMO_COPY_PAUSE_MS));
+          await ph.print(canvas);
+        }
+        notify("success", `${doneMessage} op Phomemo`);
         return;
       }
       const res = await fetch("/api/print", {
         method: "POST",
         headers: apiHeaders(),
-        body: JSON.stringify({ labelSize: labelSizeId, image }),
+        body: JSON.stringify({ labelSize: labelSizeId, image, copies }),
         signal: AbortSignal.timeout(120_000),
       });
       let data: { ok?: boolean; error?: string; jobId?: string };
@@ -493,7 +506,7 @@ export default function EditorApp() {
       }
 
       const jobId = data.jobId;
-      const deadline = Date.now() + 120_000;
+      const deadline = Date.now() + 120_000 + copies * 10_000;
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 500));
         const poll = await fetch(`/api/print?jobId=${encodeURIComponent(jobId)}`, {
@@ -508,7 +521,7 @@ export default function EditorApp() {
         }
         if (!poll.ok || !pollData.ok) throw new Error(pollData.error ?? "Printstatus onbekend");
         if (pollData.status === "done") {
-          notify("success", "Label afgedrukt");
+          notify("success", doneMessage);
           setPrinter((p) => ({ ...p, state: "online" }));
           return;
         }
@@ -644,6 +657,7 @@ export default function EditorApp() {
     const scale = Math.min(lengthMm / 85, widthMm / 62);
     return `${Math.round(85 * scale)} × ${Math.round(62 * scale)} mm`;
   })();
+  const setCopies = (value: number) => persistSettings({ ...settings, copies: normalizeCopies(value) });
   const setPhomemoLabel = (patch: Partial<PhomemoLabel>) =>
     persistSettings({ ...settings, phomemoLabel: { ...settings.phomemoLabel, ...patch } });
 
@@ -789,6 +803,42 @@ export default function EditorApp() {
           >
             <Icon name="settings" />
           </button>
+          <div className="copies-stepper" title={`Aantal labels (1 t/m ${MAX_COPIES})`}>
+            <input
+              type="text"
+              inputMode="numeric"
+              aria-label="Aantal labels"
+              value={settings.copies || ""}
+              onChange={(e) =>
+                persistSettings({ ...settings, copies: Number(e.target.value.replace(/\D/g, "")) || 0 })
+              }
+              onBlur={() => persistSettings({ ...settings, copies })}
+              onFocus={(e) => e.target.select()}
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                e.preventDefault();
+                setCopies(copies + (e.key === "ArrowUp" ? 1 : -1));
+              }}
+            />
+            <div className="copies-arrows">
+              <button
+                type="button"
+                aria-label="Eén label meer"
+                disabled={copies >= MAX_COPIES}
+                onClick={() => setCopies(copies + 1)}
+              >
+                <Icon name="chevronUp" size={14} strokeWidth={2.5} />
+              </button>
+              <button
+                type="button"
+                aria-label="Eén label minder"
+                disabled={copies <= 1}
+                onClick={() => setCopies(copies - 1)}
+              >
+                <Icon name="chevronDown" size={14} strokeWidth={2.5} />
+              </button>
+            </div>
+          </div>
           <button
             type="button"
             className="btn btn-primary btn-print"

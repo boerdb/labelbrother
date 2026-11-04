@@ -1,13 +1,16 @@
-import { MEDIA } from "@thermal-label/brother-ql-core";
+import { MEDIA, encodeJobForEngine, flipHorizontal, renderImage } from "@thermal-label/brother-ql-core";
 import type { BrotherQLStatus } from "@thermal-label/brother-ql-core";
 import { TcpTransport } from "@thermal-label/transport/node";
 import sharp from "sharp";
 import { getLabelSize, getPrintPixelSize } from "./labelSizes";
-import { openNetworkPrinter } from "./openPrinter";
-import { getPrinterHost, getPrinterPort } from "./printConfig";
+import { openNetworkPrinter, resolveQlDevice } from "./openPrinter";
+import { getPrinterDeviceKey, getPrinterHost, getPrinterPort } from "./printConfig";
 
 const CONNECT_TIMEOUT_MS = 5000;
 const STATUS_TIMEOUT_MS = 2500;
+/** Zelfde tempo als de driver: de QL-820 loopt vast op één grote schrijfactie. */
+const WRITE_CHUNK_SIZE = 1024;
+const WRITE_CHUNK_DELAY_MS = 20;
 
 export interface RawImage {
   width: number;
@@ -119,6 +122,7 @@ export async function probePrinter(): Promise<PrinterProbeResult> {
 export async function printLabel(
   labelSizeId: string,
   imageBase64: string,
+  copies = 1,
 ): Promise<void> {
   const spec = getLabelSize(labelSizeId);
   if (!spec) {
@@ -177,11 +181,19 @@ export async function printLabel(
     };
   }
 
-  const printer = await openNetworkPrinter();
+  // printer.print() van de driver negeert `copies`, dus de job zelf coderen: één job met
+  // meerdere pagina's, waarbij de printer na elke pagina snijdt.
+  const device = resolveQlDevice(getPrinterDeviceKey());
+  const bitmap = flipHorizontal(renderImage(image, { dither: true, rotate: 0 }));
+  const bytes = encodeJobForEngine([{ bitmap, media }], { copies }, device.engines[0], device.name);
 
+  const transport = await TcpTransport.connect(getPrinterHost(), getPrinterPort());
   try {
-    await printer.print(image, media, { rotate: 0 });
+    for (let off = 0; off < bytes.length; off += WRITE_CHUNK_SIZE) {
+      await transport.write(bytes.subarray(off, off + WRITE_CHUNK_SIZE));
+      await new Promise((r) => setTimeout(r, WRITE_CHUNK_DELAY_MS));
+    }
   } finally {
-    await printer.close();
+    await transport.close();
   }
 }

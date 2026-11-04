@@ -21,14 +21,14 @@ function pruneOldJobs() {
   }
 }
 
-export function startPrintJob(labelSizeId: string, imageBase64: string): string {
+export function startPrintJob(labelSizeId: string, imageBase64: string, copies = 1): string {
   pruneOldJobs();
   const jobId = crypto.randomUUID();
   jobs.set(jobId, { status: "pending", createdAt: Date.now() });
 
   void (async () => {
     try {
-      await printLabel(labelSizeId, imageBase64);
+      await printLabel(labelSizeId, imageBase64, copies);
       jobs.set(jobId, { status: "done", createdAt: Date.now() });
     } catch (err) {
       jobs.set(jobId, {
