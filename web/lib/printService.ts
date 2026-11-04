@@ -119,6 +119,27 @@ export async function probePrinter(): Promise<PrinterProbeResult> {
   }
 }
 
+/**
+ * De encoder zet het paginanummer in het derde byte van het aantal rasterregels, waardoor de
+ * printer elk label na het eerste weigert ("gegevensomvang te groot"). Volgens de Brother-
+ * specificatie is ESC i z: n1-n4, n5-n8 = aantal regels, n9 = 0 op de eerste pagina, anders 1.
+ */
+function fixPrintInfo(bytes: Uint8Array, copies: number, rowCount: number): void {
+  const data = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const printInfo = Buffer.from([0x1b, 0x69, 0x7a]);
+  const first = data.indexOf(printInfo);
+  // Elke pagina is even lang en begint met raster-modus (4 bytes) en statusverzoek (3 bytes).
+  const pageLength = (data.length - (first - 7)) / copies;
+  for (let page = 0; page < copies; page++) {
+    const at = first + page * pageLength;
+    if (!data.subarray(at, at + 3).equals(printInfo)) {
+      throw new Error("Printopdracht kon niet worden opgebouwd");
+    }
+    data.writeUInt32LE(rowCount, at + 7);
+    data[at + 11] = page === 0 ? 0 : 1;
+  }
+}
+
 export async function printLabel(
   labelSizeId: string,
   imageBase64: string,
@@ -186,6 +207,7 @@ export async function printLabel(
   const device = resolveQlDevice(getPrinterDeviceKey());
   const bitmap = flipHorizontal(renderImage(image, { dither: true, rotate: 0 }));
   const bytes = encodeJobForEngine([{ bitmap, media }], { copies }, device.engines[0], device.name);
+  fixPrintInfo(bytes, copies, bitmap.heightPx);
 
   const transport = await TcpTransport.connect(getPrinterHost(), getPrinterPort());
   try {
