@@ -8,3 +8,5 @@ web/.next/
 **/certs/*.pem
 !**/certs/.gitkeep
 web/public/sw.js
+.env.local
+.env.production
