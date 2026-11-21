@@ -14,7 +14,7 @@ interface PrintBody {
 }
 
 export async function GET(request: Request) {
-  const authError = assertApiKey(request);
+  const authError = await assertApiKey(request);
   if (authError) {
     return authError;
   }
@@ -38,7 +38,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const authError = assertApiKey(request);
+  const authError = await assertApiKey(request);
   if (authError) {
     return authError;
   }
