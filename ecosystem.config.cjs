@@ -1,34 +1,10 @@
-/** PM2 — BrotherDruk / labelbrother op poort 3022 (server NEXT) */
-const fs = require("fs");
-const path = require("path");
-
-function loadEnvFile(filename) {
-  const filePath = path.join(__dirname, filename);
-  if (!fs.existsSync(filePath)) return {};
-  const env = {};
-  for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    env[key] = value;
-  }
-  return env;
-}
-
-const fileEnv = {
-  ...loadEnvFile(".env.production"),
-  ...loadEnvFile(".env.local"),
-};
-
+/**
+ * PM2 — BrotherDruk / labelbrother op poort 3022 (server NEXT)
+ *
+ * Printerinstellingen en geheimen (zoals BROTHER_PASSWORD) staan in
+ * .env.production en .env.local; web/server.mjs leest die bij elke start zelf
+ * in. Na een wijziging is dus een gewone `pm2 restart labelbrother` genoeg.
+ */
 module.exports = {
   apps: [
     {
@@ -45,12 +21,7 @@ module.exports = {
         NODE_ENV: "production",
         PORT: "3022",
         HOSTNAME: "0.0.0.0",
-        PRINTER_HOST: "192.168.1.215",
-        PRINTER_PORT: "9100",
-        PRINTER_DEVICE_KEY: "QL_820NWBc",
-        DEFAULT_LABEL: "85x62",
         TZ: "Europe/Amsterdam",
-        ...fileEnv,
       },
     },
   ],

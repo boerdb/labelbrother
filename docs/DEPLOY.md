@@ -39,6 +39,15 @@ pm2 start ecosystem.config.cjs
 pm2 save
 ```
 
+## Instellingen en wachtwoord
+
+`.env.production` (printer) en `.env.local` (o.a. `BROTHER_PASSWORD`) staan in de hoofdmap.
+`web/server.mjs` leest ze bij elke start zelf in, dus na een wijziging is dit genoeg:
+
+```bash
+pm2 restart labelbrother
+```
+
 ## Updates
 
 ```bash
