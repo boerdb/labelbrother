@@ -55,7 +55,8 @@ def main() -> None:
     run(ssh, f"pm2 restart {APP_NAME} --update-env")
     run(
         ssh,
-        f"sleep 2 && curl -s -o /dev/null -w '%{{http_code}}\\n' http://127.0.0.1:{PORT}/",
+        # De app heeft na een herstart een paar seconden nodig; tot 30 s opnieuw proberen.
+        f"for i in $(seq 1 30); do curl -s -o /dev/null -w '%{{http_code}}\\n' http://127.0.0.1:{PORT}/login && exit 0; sleep 1; done; exit 1",
     )
     ssh.close()
     print("Pull deploy OK")
