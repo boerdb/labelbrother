@@ -14,6 +14,7 @@
     "@thermal-label/brother-ql-node": "^0.6.1",
     "konva": "^9.3.20",
     "next": "^15.2.4",
+    "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-konva": "^19.0.5",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.12",
     "@types/react-dom": "^19.0.4",
     "@types/uuid": "^10.0.0",

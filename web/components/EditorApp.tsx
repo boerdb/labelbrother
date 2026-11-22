@@ -12,7 +12,7 @@ import { Icon, type IconName } from "@/components/ui/Icon";
 import { MAX_COPIES, normalizeCopies } from "@/lib/copies";
 import type { EditorElement, TextElement } from "@/lib/editorTypes";
 import { getAllIcons, type IconDef } from "@/lib/icons";
-import { LABEL_SIZES, type LabelSizeId } from "@/lib/labelSizes";
+import { DOTS_PER_MM, LABEL_SIZES, type LabelSizeId } from "@/lib/labelSizes";
 import {
   DEFAULT_PHOMEMO_LABEL,
   getPhomemoPrinter,
@@ -306,6 +306,19 @@ export default function EditorApp() {
       src: icon.src,
       width: ICON_SIZE,
       height: ICON_SIZE,
+    });
+  };
+
+  const addQr = () => {
+    const size = Math.round(25 * DOTS_PER_MM);
+    addElement({
+      id: uuid(),
+      type: "qr",
+      x: Math.round(center.x - size / 2),
+      y: Math.round(center.y - size / 2),
+      text: "https://",
+      width: size,
+      height: size,
     });
   };
 
@@ -700,6 +713,15 @@ export default function EditorApp() {
               <button type="button" className="tile" onClick={() => addLine(true)}>
                 <span className="tile-shape tile-shape-dashed" />
                 <span>Stippellijn</span>
+              </button>
+            </div>
+          </section>
+          <section className="panel-group">
+            <h3>Codes</h3>
+            <div className="tile-grid">
+              <button type="button" className="tile" onClick={addQr}>
+                <Icon name="qr" size={26} strokeWidth={1.6} />
+                <span>QR-code</span>
               </button>
             </div>
           </section>

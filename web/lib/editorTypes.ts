@@ -1,4 +1,4 @@
-export type ElementType = "text" | "rect" | "line" | "icon";
+export type ElementType = "text" | "rect" | "line" | "icon" | "qr";
 
 export interface BaseElement {
   id: string;
@@ -44,7 +44,16 @@ export interface IconElement extends BaseElement {
   height: number;
 }
 
-export type EditorElement = TextElement | RectElement | LineElement | IconElement;
+export interface QrElement extends BaseElement {
+  type: "qr";
+  /** Tekst of webadres in de QR-code. */
+  text: string;
+  /** Altijd vierkant: width === height. */
+  width: number;
+  height: number;
+}
+
+export type EditorElement = TextElement | RectElement | LineElement | IconElement | QrElement;
 
 export interface EditorDocument {
   labelSizeId: string;

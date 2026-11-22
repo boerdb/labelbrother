@@ -4,6 +4,7 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -11,6 +12,7 @@ import { Stage, Layer, Text, Rect, Line, Image as KonvaImage, Transformer } from
 import type Konva from "konva";
 import type { EditorElement } from "@/lib/editorTypes";
 import { getIconSrc } from "@/lib/icons";
+import { renderQrCanvas } from "@/lib/qr";
 import { LABEL_SIZES, type LabelSizeId } from "@/lib/labelSizes";
 
 export interface LabelCanvasHandle {
@@ -94,6 +96,42 @@ const IconNode = forwardRef<
           width: Math.max(MIN_BOX, Math.round(element.width * scaleX)),
           height: Math.max(MIN_BOX, Math.round(element.height * scaleY)),
         });
+      }}
+    />
+  );
+});
+
+const QrNode = forwardRef<
+  Konva.Image,
+  {
+    element: Extract<EditorElement, { type: "qr" }>;
+    onSelect: () => void;
+    drag: DragHandlers;
+    onTransformEnd: (patch: { x: number; y: number; width: number; height: number }) => void;
+  }
+>(function QrNode({ element, onSelect, drag, onTransformEnd }, ref) {
+  // Canvas op exact printformaat: bij het afdrukken valt elk blokje op hele dots.
+  const image = useMemo(
+    () => renderQrCanvas(element.text, element.width),
+    [element.text, element.width],
+  );
+  return (
+    <KonvaImage
+      ref={ref}
+      image={image}
+      x={Math.round(element.x)}
+      y={Math.round(element.y)}
+      width={Math.round(element.width)}
+      height={Math.round(element.width)}
+      draggable
+      onMouseDown={onSelect}
+      onTouchStart={onSelect}
+      onDragMove={drag.onDragMove}
+      onDragEnd={drag.onDragEnd}
+      onTransformEnd={(e) => {
+        const { scaleX, scaleY, x, y } = bakeScale(e.target);
+        const size = Math.max(MIN_BOX, Math.round(element.width * Math.max(scaleX, scaleY)));
+        onTransformEnd({ x: Math.round(x), y: Math.round(y), width: size, height: size });
       }}
     />
   );
@@ -194,11 +232,18 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
         });
         return;
       }
+      if (el.type === "qr") {
+        onChangeElement(el.id, { x: Math.round(node.x()), y: Math.round(node.y()) });
+        return;
+      }
       onChangeElement(el.id, { x: node.x(), y: node.y() });
     },
   });
 
-  const keepRatio = selectedElement?.type === "icon" || selectedElement?.type === "text";
+  const keepRatio =
+    selectedElement?.type === "icon" ||
+    selectedElement?.type === "text" ||
+    selectedElement?.type === "qr";
   const enabledAnchors =
     selectedElement?.type === "line"
       ? ["middle-left", "middle-right"]
@@ -308,6 +353,18 @@ const LabelCanvas = forwardRef<LabelCanvasHandle, LabelCanvasProps>(function Lab
             if (el.type === "icon") {
               return (
                 <IconNode
+                  key={el.id}
+                  ref={isSelected ? attachSelected : undefined}
+                  element={el}
+                  onSelect={select}
+                  drag={drag}
+                  onTransformEnd={(patch) => onChangeElement(el.id, patch)}
+                />
+              );
+            }
+            if (el.type === "qr") {
+              return (
+                <QrNode
                   key={el.id}
                   ref={isSelected ? attachSelected : undefined}
                   element={el}

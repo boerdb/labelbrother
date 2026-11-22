@@ -2,9 +2,10 @@
 
 import { useEffect, useState, type RefObject } from "react";
 import { Icon, type IconName } from "@/components/ui/Icon";
-import type { EditorElement, TextElement } from "@/lib/editorTypes";
+import type { EditorElement, QrElement, TextElement } from "@/lib/editorTypes";
 import { getAllIcons } from "@/lib/icons";
 import { DOTS_PER_MM, type LabelSizeSpec } from "@/lib/labelSizes";
+import { QR_MIN_MODULE_DOTS, QR_QUIET_MODULES, qrMatrix, qrModuleDots } from "@/lib/qr";
 
 interface InspectorProps {
   spec: LabelSizeSpec;
@@ -28,10 +29,12 @@ const TYPE_META: Record<EditorElement["type"], { label: string; icon: IconName }
   rect: { label: "Rechthoek", icon: "square" },
   line: { label: "Lijn", icon: "minus" },
   icon: { label: "Icon", icon: "smile" },
+  qr: { label: "QR-code", icon: "qr" },
 };
 
 export function elementTitle(el: EditorElement): string {
   if (el.type === "text") return el.text.split("\n")[0]?.trim() || "Lege tekst";
+  if (el.type === "qr") return el.text.trim() || "Lege QR-code";
   if (el.type === "icon") {
     return getAllIcons().find((i) => i.id === el.iconId)?.label ?? "Icon";
   }
@@ -333,6 +336,8 @@ export default function Inspector(props: InspectorProps) {
         </section>
       )}
 
+      {selected.type === "qr" && <QrFields {...props} el={selected} />}
+
       <section className="panel-group">
         <h3>Positie &amp; maat</h3>
         <div className="mm-grid">
@@ -346,7 +351,7 @@ export default function Inspector(props: InspectorProps) {
               onCommit={(mm) =>
                 onCommit(
                   selected.id,
-                  selected.type === "icon"
+                  selected.type === "icon" || selected.type === "qr"
                     ? { width: toDots(mm), height: toDots(mm) }
                     : { width: toDots(mm) },
                 )
@@ -388,6 +393,63 @@ export default function Inspector(props: InspectorProps) {
         </button>
       </div>
     </div>
+  );
+}
+
+function QrFields({
+  el,
+  onLive,
+  onBeginEdit,
+}: InspectorProps & { el: QrElement }) {
+  const matrix = qrMatrix(el.text);
+  const moduleDots = matrix ? qrModuleDots(el.width, matrix.count) : 0;
+  const minMm = matrix
+    ? Math.ceil(((matrix.count + QR_QUIET_MODULES * 2) * QR_MIN_MODULE_DOTS) / DOTS_PER_MM)
+    : 0;
+  return (
+    <section className="panel-group">
+      <h3>QR-code</h3>
+      <div className="field">
+        <textarea
+          className="input"
+          rows={3}
+          value={el.text}
+          placeholder="https://… of gewone tekst"
+          aria-label="Inhoud van de QR-code"
+          onFocus={onBeginEdit}
+          onChange={(e) => onLive(el.id, { text: e.target.value })}
+        />
+      </div>
+      <RangeField
+        label="Grootte"
+        value={toMm(el.width)}
+        min={8}
+        max={60}
+        step={1}
+        unit=" mm"
+        onBegin={onBeginEdit}
+        onLive={(mm) => {
+          const size = toDots(mm);
+          const cx = el.x + el.width / 2;
+          const cy = el.y + el.height / 2;
+          onLive(el.id, {
+            width: size,
+            height: size,
+            x: Math.round(cx - size / 2),
+            y: Math.round(cy - size / 2),
+          });
+        }}
+      />
+      {!matrix ? (
+        <p className="hint hint-warn">Deze tekst is te lang voor een QR-code.</p>
+      ) : moduleDots < QR_MIN_MODULE_DOTS ? (
+        <p className="hint hint-warn">
+          Te klein om goed te scannen. Maak de code minstens {minMm} mm, of maak de tekst korter.
+        </p>
+      ) : (
+        <p className="hint">Scant goed vanaf {minMm} mm. Korte tekst geeft grotere blokjes.</p>
+      )}
+    </section>
   );
 }
 

@@ -1,5 +1,25 @@
 import type { EditorElement } from "@/lib/editorTypes";
 import { getIconSrc } from "@/lib/icons";
+import { qrMatrix, qrModuleDots } from "@/lib/qr";
+
+function QrPreview({ text, x, y, size }: { text: string; x: number; y: number; size: number }) {
+  const matrix = qrMatrix(text);
+  if (!matrix) return null;
+  const m = Math.max(1, qrModuleDots(size, matrix.count));
+  const offset = (size - m * matrix.count) / 2;
+  let d = "";
+  for (let r = 0; r < matrix.count; r++) {
+    for (let c = 0; c < matrix.count; c++) {
+      if (matrix.isDark(r, c)) d += `M${x + offset + c * m} ${y + offset + r * m}h${m}v${m}h-${m}z`;
+    }
+  }
+  return (
+    <g>
+      <rect x={x} y={y} width={size} height={size} fill="#fff" />
+      <path d={d} fill="#000" />
+    </g>
+  );
+}
 
 interface LabelPreviewProps {
   elements: EditorElement[];
@@ -44,6 +64,9 @@ export function LabelPreview({ elements, width, height }: LabelPreviewProps) {
               strokeDasharray={el.dashed ? `${el.strokeWidth * 3} ${el.strokeWidth * 2}` : undefined}
             />
           );
+        }
+        if (el.type === "qr") {
+          return <QrPreview key={el.id} text={el.text} x={el.x} y={el.y} size={el.width} />;
         }
         if (el.type === "icon") {
           const src = el.src ?? getIconSrc(el.iconId);

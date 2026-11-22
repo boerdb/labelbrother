@@ -303,6 +303,11 @@ button:disabled {
   line-height: 1.5;
 }
 
+.hint-warn {
+  color: #b45309;
+  font-weight: 600;
+}
+
 .hint-footer {
   text-align: center;
 }
