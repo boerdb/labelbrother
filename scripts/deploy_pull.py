@@ -19,7 +19,8 @@ APP_NAME = os.environ.get("DEPLOY_APP", "labelbrother")
 
 def run(ssh: paramiko.SSHClient, cmd: str, timeout: int = 600) -> None:
     print(f"$ {cmd}")
-    _, stdout, stderr = ssh.exec_command(cmd, get_pty=True, timeout=timeout)
+    # Geen pty en CI=1: anders kan `next build` een vraag stellen en blijven wachten.
+    _, stdout, stderr = ssh.exec_command(f"export CI=1; {cmd} < /dev/null", get_pty=False, timeout=timeout)
     out = stdout.read().decode("utf-8", errors="replace")
     err = stderr.read().decode("utf-8", errors="replace")
     code = stdout.channel.recv_exit_status()
