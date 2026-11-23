@@ -1,4 +1,4 @@
-# BrotherDruk
+# Label Printer
 
 Installbare **Next.js PWA** om labels te ontwerpen (tekst, vormen, icons) en af te drukken op een **Brother QL-820NWB(c)** op het thuisnetwerk.
 

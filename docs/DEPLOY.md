@@ -1,4 +1,4 @@
-# BrotherDruk deployen (Next + PM2, geen Docker)
+# Label Printer deployen (Next + PM2, geen Docker)
 
 Zelfde aanpak als Rekenmachine / Scheikunde / VVH-js.
 

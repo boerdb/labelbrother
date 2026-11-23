@@ -1,5 +1,5 @@
 /**
- * Eenvoudige wachtwoordlogin voor BrotherDruk.
+ * Eenvoudige wachtwoordlogin voor Label Printer.
  *
  * Het cookie bevat `<vervaldatum>.<handtekening>`; de handtekening is een
  * HMAC met het wachtwoord als sleutel. Wachtwoord wijzigen (BROTHER_PASSWORD)

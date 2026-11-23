@@ -1,6 +1,6 @@
 {
-  "name": "BrotherDruk",
-  "short_name": "BrotherDruk",
+  "name": "Label Printer",
+  "short_name": "Label Printer",
   "description": "Labels ontwerpen en afdrukken op Brother QL",
   "start_url": "/",
   "display": "standalone",

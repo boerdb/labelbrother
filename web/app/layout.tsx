@@ -3,13 +3,13 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://brother.clvs.nl"),
-  title: "BrotherDruk",
+  title: "Label Printer",
   description: "Label ontwerpen en afdrukken op Brother QL",
-  applicationName: "BrotherDruk",
+  applicationName: "Label Printer",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "BrotherDruk",
+    title: "Label Printer",
   },
   manifest: "/manifest.webmanifest",
   icons: {
