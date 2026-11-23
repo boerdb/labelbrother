@@ -4,21 +4,21 @@
   "private": true,
   "scripts": {
     "dev": "node server.mjs",
-    "build": "node scripts/generate-icons.mjs && next build",
+    "build": "node scripts/generate-icons.mjs && next build --webpack",
     "start": "node server.mjs",
     "postinstall": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
-    "@serwist/next": "^9.0.12",
+    "@serwist/next": "^9.5.15",
     "@thermal-label/brother-ql-core": "^0.6.1",
     "@thermal-label/brother-ql-node": "^0.6.1",
     "konva": "^9.3.20",
-    "next": "^15.2.4",
+    "next": "^16.4.6",
     "qrcode": "^1.5.4",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "react-konva": "^19.0.5",
-    "serwist": "^9.0.12",
+    "serwist": "^9.5.15",
     "sharp": "^0.33.5",
     "uuid": "^11.1.0"
   },

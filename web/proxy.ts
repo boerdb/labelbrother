@@ -7,7 +7,7 @@ import { SESSION_COOKIE, safeEqual, verifySessionToken } from "@/lib/session";
  * Alles achter de login, behalve de loginpagina zelf.
  * Scripts mogen ook binnen met de API-sleutel (x-api-key), als die is ingesteld.
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   if (pathname === "/login" || pathname === "/api/login") {
     return NextResponse.next();
@@ -31,15 +31,8 @@ export async function middleware(request: NextRequest) {
   return NextResponse.redirect(loginUrl);
 }
 
-/**
- * /api/print valt bewust buiten de middleware: Next 15.5 met een Node-middleware zet een
- * grote POST-body die traag binnenkomt (labelplaatje vanaf de telefoon) soms "vast"
- * ("Response body object should not be disturbed or locked") en geeft dan een 500.
- * De route controleert login of API-sleutel zelf (assertApiKey).
- */
 export const config = {
-  runtime: "nodejs",
   matcher: [
-    "/((?!_next/|api/print|sw\\.js|swe-worker|manifest\\.webmanifest|favicon|icons/|.*\\.(?:png|svg|ico|webp|jpg|woff2?)$).*)",
+    "/((?!_next/|sw\\.js|swe-worker|manifest\\.webmanifest|favicon|icons/|.*\\.(?:png|svg|ico|webp|jpg|woff2?)$).*)",
   ],
 };
