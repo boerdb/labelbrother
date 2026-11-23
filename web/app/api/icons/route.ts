@@ -24,7 +24,7 @@ export async function POST(req: Request) {
 
   try {
     const res = await fetch(url, {
-      headers: { "User-Agent": "BrotherDruk/1.0 (label editor)" },
+      headers: { "User-Agent": "LabelPrinter/1.0 (label editor)" },
       next: { revalidate: 86400 },
     });
     if (!res.ok) {

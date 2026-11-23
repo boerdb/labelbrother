@@ -61,7 +61,7 @@ export default function LoginPage() {
           gap: 14,
         }}
       >
-        <h1 style={{ margin: 0, fontSize: 20 }}>BrotherDruk</h1>
+        <h1 style={{ margin: 0, fontSize: 20 }}>Label Printer</h1>
         <label style={{ display: "grid", gap: 6, fontSize: 13, color: "var(--muted)" }}>
           Wachtwoord
           <input

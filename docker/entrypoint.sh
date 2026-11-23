@@ -6,7 +6,7 @@ if [ ! -f "$SSL_CERT" ] || [ ! -f "$SSL_KEY" ]; then
   echo "TLS-certificaat aanmaken (self-signed)…"
   openssl req -x509 -nodes -days 825 -newkey rsa:2048 \
     -keyout "$SSL_KEY" -out "$SSL_CERT" \
-    -subj "/CN=brotherdruk.local/O=BrotherDruk"
+    -subj "/CN=brotherdruk.local/O=Label Printer"
 fi
 cd /app/web
 exec node server.mjs

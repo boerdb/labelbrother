@@ -1,5 +1,5 @@
 /**
- * PM2 — BrotherDruk / labelbrother op poort 3022 (server NEXT)
+ * PM2 — Label Printer / labelbrother op poort 3022 (server NEXT)
  *
  * Printerinstellingen en geheimen (zoals BROTHER_PASSWORD) staan in
  * .env.production en .env.local; web/server.mjs leest die bij elke start zelf

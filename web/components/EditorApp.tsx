@@ -778,7 +778,7 @@ export default function EditorApp() {
         <div className="brand">
           <img src="/favicon.svg" alt="" className="brand-logo" />
           <div className="brand-text">
-            <strong>BrotherDruk</strong>
+            <strong>Label Printer</strong>
             <span>Label-editor</span>
           </div>
         </div>

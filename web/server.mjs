@@ -70,7 +70,7 @@ const localUrl = `http://localhost:${port}`;
 if (tls) {
   createHttpsServer(tls, onRequest).listen(port, hostname, () => {
     console.log("");
-    console.log("  BrotherDruk draait (HTTPS)");
+    console.log("  Label Printer draait (HTTPS)");
     console.log(`  Open in browser: https://localhost:${port}`);
     console.log("  Stoppen: Ctrl+C in deze terminal");
     console.log("");
@@ -78,7 +78,7 @@ if (tls) {
 } else {
   createHttpServer(onRequest).listen(port, hostname, () => {
     console.log("");
-    console.log("  BrotherDruk draait — dit is normaal; de terminal blijft open.");
+    console.log("  Label Printer draait — dit is normaal; de terminal blijft open.");
     console.log(`  Open in browser: ${localUrl}`);
     console.log("  Printer (optioneel): $env:PRINTER_HOST=\"192.168.1.215\"");
     console.log("  Docker is niet nodig voor lokaal gebruik.");
