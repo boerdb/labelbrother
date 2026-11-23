@@ -31,9 +31,15 @@ export async function middleware(request: NextRequest) {
   return NextResponse.redirect(loginUrl);
 }
 
+/**
+ * /api/print valt bewust buiten de middleware: Next 15.5 met een Node-middleware zet een
+ * grote POST-body die traag binnenkomt (labelplaatje vanaf de telefoon) soms "vast"
+ * ("Response body object should not be disturbed or locked") en geeft dan een 500.
+ * De route controleert login of API-sleutel zelf (assertApiKey).
+ */
 export const config = {
   runtime: "nodejs",
   matcher: [
-    "/((?!_next/|sw\\.js|swe-worker|manifest\\.webmanifest|favicon|icons/|.*\\.(?:png|svg|ico|webp|jpg|woff2?)$).*)",
+    "/((?!_next/|api/print|sw\\.js|swe-worker|manifest\\.webmanifest|favicon|icons/|.*\\.(?:png|svg|ico|webp|jpg|woff2?)$).*)",
   ],
 };

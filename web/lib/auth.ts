@@ -15,22 +15,19 @@ function cookieValue(request: Request, name: string): string | undefined {
 
 /**
  * Toegang tot de print-API: met een geldige login (de eigen app) of met de
- * API-sleutel (andere apps, zoals adressen). Zonder API_KEY is alleen de
- * login nodig, die de middleware al afdwingt.
+ * API-sleutel (andere apps, zoals adressen). /api/print valt buiten de
+ * middleware, dus deze controle is daar de enige: altijd login of sleutel.
  */
 export async function assertApiKey(request: Request): Promise<Response | null> {
-  const required = getApiKey();
-  if (!required) {
-    return null;
-  }
-  const provided =
-    request.headers.get("x-api-key") ??
-    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  if (provided && safeEqual(provided, required)) {
-    return null;
-  }
   if (await verifySessionToken(cookieValue(request, SESSION_COOKIE))) {
     return null;
   }
-  return Response.json({ ok: false, error: "Ongeldige API-sleutel" }, { status: 401 });
+  const required = getApiKey();
+  const provided =
+    request.headers.get("x-api-key") ??
+    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (required && provided && safeEqual(provided, required)) {
+    return null;
+  }
+  return Response.json({ ok: false, error: "Inloggen vereist" }, { status: 401 });
 }
